@@ -1,0 +1,48 @@
+
+Claude finished the response
+what are the strategies of trading TIPS this passage specifies? i am trying to first replicate what they are doing here. The first thing to realize about TIPS is that they are essentially duration products, and as such, they should be traded like nominal rates. Usually, real rates peak at exactly the same time as nominal rates, as can be seen in Figure 5.29. This is especially important to realize during inflation spikes. When high inflation is expected, investors often switch from nominal rates to real rates. However, this will not fully protect portfolios. Although it is true that losses will be smaller in real rates than in nominal rates when inflation increases, there will still be losses. This was also illustrated in 2022. As soon as the Fed started to hike interest rates, pushing nominal rates higher, TIPS also started to lose money. High inflation was unable to overcome the headwind of higher nominal yields, other than at the very short end of the curve. FIGURE 5.29 Real rates peak when nominal rates peak. Source: Bloomberg and authors’ calculations. For true protection during inflation spikes, it is therefore better to trade breakevens than real rates, as breakevens can generate alpha independent of the general US rates view. As can be seen in Figure 5.30, the basic rule of thumb is that breakevens fall sharply into (deep) recessions, only to bounce back aggressively when markets smell the end of the downturn. The two recessions, for which we have TIPS data, were so deep (GFC and COVID) that the Fed cut rates to zero, pushing breakevens to close to zero or into negative territory. Outside of (deep) recessions, breakevens also start to rise well before the first hike and into the very early parts of the hiking cycle. When the Fed starts to hike in earnest, breakevens start to fall. During easing cycles going into a soft landing (2024) breakevens tend to widen. FIGURE 5.30 Breakevens collapse into recessions, then rebound quickly. Source: Bloomberg. The illiquidity of linkers is actually an advantage when trading breakevens. When real rates sell off during times of severe stress due to illiquidity, it happens at the same time when nominal rates rally. Therefore, breakevens become artificially depressed. The spikes in real rates are actually the reason why breakevens collapsed as much into the last Fed cut in 2008 and also in 2020. This feature is a great advantage when trading breakevens over trading linkers. In cutting cycles into hard landings, investors often position for breakevens to fall. If this gets amplified due to a rising illiquidity premium of linkers, that is helpful to the trade. During more normal liquidity conditions, linkers have a big oil component given that they are linked to headline inflation, not to core. The oil impact is especially significant at the front end of the curve, but it is surprising that even the back end of the breakeven curve has a strong oil component. This is illustrated in Figure 5.31a. But it is not just oil that is relevant. It is the general business cycle that is important. This is why breakevens have a strong correlation with copper as well, as per Figure 5.31b. FIGURE 5.31 (a) Oil an important driver for breakevens. (b) Copper correlated to breakevens, too. Source: Bloomberg. Using these fundamental factors in a simple trading rule works quite well. Long the TIPS index versus the nominal US rates index has a positive IR of 0.23. The TIPS index is more volatile despite having a lower duration (averaging 4.95 since 1998 versus 5.7 for the Treasury index). Being overweight TIPS against nominals only when oil is above its 55dma (lagged one day), raises this to 0.63. Using the same strategy with copper rather than with oil improves the information ratio by even more, moving it to 0.81, as is shown in Figure 5.32. This is likely the case because our TIPS index has a duration of 4.5 years, and at that duration, the business cycle impact dominates over the direct price impact of oil, which is more relevant for the short end of the curve.
+
+Show less
+20:16
+
+Extracted and organized multiple TIPS trading strategies hierarchically
+Extracted and organized multiple TIPS trading strategies hierarchically
+The passage really contains two layers: a conceptual framework for how to think about TIPS, and one concrete, backtestable rule that's the actual replicable strategy. Here's how I'd separate them.
+
+The replicable trading rule (the part you can actually backtest)
+This is the heart of it — a signal-overlay on a TIPS-vs-nominal relative value trade:
+
+Base trade: Go long a TIPS index versus a nominal US Treasury index (i.e., overweight TIPS against nominals). On its own, this gives an information ratio of 0.23. Worth noting: their TIPS index is more volatile than the Treasury index despite having lower duration (averaging 4.95 since 1998 vs. 5.7 for Treasuries).
+Oil overlay: Only hold the overweight-TIPS position when oil is above its 55-day moving average, lagged by one day. Be flat/out otherwise. This conditioning raises the IR from 0.23 to 0.63.
+Copper overlay (the better version): Run the identical rule but use copper above its 55-day moving average as the trigger instead of oil. This pushes the IR to 0.81.
+The rationale they give for copper beating oil: their TIPS index has ~4.5 years duration, and at that duration the broad business cycle (which copper proxies) dominates over the direct headline-inflation/oil price impact, which matters more at the short end of the curve.
+
+So to literally replicate the best version: long TIPS index / short nominal index, position on only when copper > its 55dma (lagged one day), and measure IR.
+
+The conceptual framework around it
+These aren't mechanical rules but they're the reasoning that motivates the trade:
+
+TIPS behave like duration products. Real rates peak at the same time as nominal rates, so TIPS should be traded like nominal rates. The implication: switching from nominals into real rates during an inflation spike does not fully protect you — losses are smaller than in nominals but still real (2022 is the example, where TIPS lost money once the Fed hiked, except at the very short end).
+
+For genuine inflation protection, trade breakevens, not real rates. Breakevens can generate alpha independent of your general US rates view. Their breakeven cycle playbook:
+
+Breakevens collapse into deep recessions, then rebound aggressively once markets sense the bottom.
+Outside deep recessions, they rise well before the first hike and into the early hiking cycle, then fall once the Fed hikes in earnest.
+In easing cycles heading toward a soft landing (2024), they widen.
+Linker illiquidity is a feature, not a bug, for breakeven trades. In severe stress, real rates sell off (illiquidity) exactly when nominals rally, which artificially depresses breakevens (this drove the breakeven collapses into the 2008 and 2020 Fed cuts). So if you're positioned for breakevens to fall in a hard-landing cutting cycle, a rising illiquidity premium amplifies the trade in your favor.
+
+The drivers underneath breakevens are oil and copper — oil because linkers track headline (not core) inflation, and copper because breakevens ultimately track the business cycle. This is what justifies using those two as the trading signals in the concrete rule above.
+
+One thing to flag before you replicate: the passage doesn't fully specify index construction (which TIPS/Treasury indices, duration-matching or not, how the long/short is sized, transaction costs). The IRs you get will be sensitive to those choices, so if your numbers don't land near 0.23 / 0.63 / 0.81, that's the most likely source of divergence rather than the signal logic itself.
+
+Want me to sketch out the backtest in code (e.g., pandas), or work through how to handle the duration-matching between the two index legs?
+
+
+Want to be notified when Claude responds?
+Claude Fable 5 is currently unavailable.
+Learn more(opens in new tab)
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
