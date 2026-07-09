@@ -67,7 +67,7 @@ def fetch_zt(start: str = START, end: str | None = END) -> pd.DataFrame:
     """
     return _download(TICKER_ZT, start, end)
 
-
+# Calculate the D needed for each daily yield
 def _modified_duration(y: pd.Series, N: float = 2.0, k: int = 2) -> pd.Series:
     """
     Compute daily modified duration for a par bond from its yield series.
@@ -168,11 +168,16 @@ def fetch_dgs2_full_pnl(
     dy = y2.diff()
 
     N_YEARS    = 2.0
-    TRADE_DAYS = 250
+    TRADE_DAYS = 252
 
+    # all components stored from the LONG bond holder's perspective:
+    #   price_ret  < 0 when yields rise (long holder loses)
+    #   carry_fund > 0 when curve upsloping (long holder earns coupon net of repo)
+    #   carry_roll > 0 when curve upsloping (long holder gains as bond rolls down)
+    # short position = negate all three uniformly
     price_ret  = -D * dy
-    carry_fund = -(y2 - ff) / (TRADE_DAYS * N_YEARS)
-    carry_roll = -D * (y2 - y1) / TRADE_DAYS
+    carry_fund = (y2 - ff) / (TRADE_DAYS * N_YEARS)
+    carry_roll = D * (y2 - y1) / TRADE_DAYS
     total_ret  = price_ret + carry_fund + carry_roll
 
     return pd.DataFrame({

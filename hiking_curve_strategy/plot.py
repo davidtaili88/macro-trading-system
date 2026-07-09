@@ -294,3 +294,123 @@ def cycle_breakdown(
         fig.savefig(save_path, dpi=150)
     # matplotlib.pyplot: render and display both subplots
     plt.show(block=False)
+
+
+def carry_decomposition_plot(
+    pnl_full: pd.DataFrame,
+    cycles: list[dict],
+    save_path: str | None = None,
+):
+    """
+    Per-cycle stacked bar showing how total PnL splits across three sources:
+      price_ret   — pure yield-move gain (what you're trying to capture)
+      carry_fund  — funding carry drag (net coupon cost)
+      carry_roll  — roll-down carry drag
+
+    All values are cumulative returns over the active payer window of each cycle,
+    expressed as percentages. Bars are stacked so total height = total_ret.
+    """
+    labels, price_vals, fund_vals, roll_vals = [], [], [], []
+
+    for c in cycles:
+        mask = (pnl_full.index >= c["first_hike"]) & (pnl_full.index <= c["last_hike"])
+        window = pnl_full[mask].dropna()
+        if window.empty:
+            continue
+
+        def _cum(col: str) -> float:
+            r = -window[col]
+            return ((1 + r).prod() - 1) * 100
+
+        labels.append(c["label"])
+        price_vals.append(_cum("price_ret"))
+        fund_vals.append(_cum("carry_fund"))
+        roll_vals.append(_cum("carry_roll"))
+
+    if not labels:
+        print("No cycles to plot in carry decomposition.")
+        return
+
+    x = np.arange(len(labels))
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    ax.bar(x, price_vals, label="Price move (−D·Δy)", color="#4878CF")
+    ax.bar(x, fund_vals,  label="Funding carry (coupon − repo)", color="#D65F5F",
+           bottom=price_vals)
+    bottom_roll = [p + f for p, f in zip(price_vals, fund_vals)]
+    ax.bar(x, roll_vals,  label="Roll-down carry (−D·slope/250)", color="#C4AD66",
+           bottom=bottom_roll)
+
+    ax.axhline(0, color="black", lw=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.set_title("DGS2 Payer — Cumulative PnL Decomposition per Cycle (%)", fontsize=13)
+    ax.set_ylabel("Cumulative return (%)")
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3, axis="y")
+
+    fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150)
+    plt.show(block=False)
+
+
+def pnl_components_timeseries(
+    pnl_full: pd.DataFrame,
+    signal: pd.Series,
+    save_path: str | None = None,
+):
+    """
+    Cumulative daily PnL for all four components on one line chart, restricted
+    to days when the payer signal is active (signal == -1 or True).
+
+    Lines:
+      price_ret   — pure yield-move P&L (what the signal is capturing)
+      carry_fund  — funding carry drag accumulated over time
+      carry_roll  — roll-down carry drag accumulated over time
+      total_ret   — sum of all three (what you'd actually earn)
+
+    All series start at 0 on the first active signal day so they are directly
+    comparable on the same axis.
+    """
+    # align signal to pnl_full index; treat missing as not active
+    # signal may be boolean (detect_signal output) or int (-1/0/1 from calc_strat_ret)
+    sig = signal.reindex(pnl_full.index).fillna(0)
+    active = sig.astype(bool) | (sig == -1)
+
+    # for a short position, flip the sign of each component
+    cols = ["price_ret", "carry_fund", "carry_roll", "total_ret"]
+    short_pnl = pnl_full[cols][active] * -1
+
+    if short_pnl.empty:
+        print("No active signal days to plot.")
+        return
+
+    # cumulative sum in return space (additive, not compounded) for readability
+    cumulative = short_pnl.cumsum() * 100   # convert to basis points / percent
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    styles = {
+        "price_ret":  ("#4878CF", 2.0, "-",  "Price move (−D·Δy)"),
+        "carry_fund": ("#D65F5F", 1.4, "--", "Funding carry (coupon − repo)"),
+        "carry_roll": ("#C4AD66", 1.4, "--", "Roll-down carry (−D·slope/250)"),
+        "total_ret":  ("black",   2.0, "-",  "Total (price + both carry)"),
+    }
+
+    for col, (color, lw, ls, label) in styles.items():
+        ax.plot(cumulative.index, cumulative[col], color=color, lw=lw, ls=ls, label=label)
+
+    ax.axhline(0, color="grey", lw=0.7, ls=":")
+
+    ax.set_title("DGS2 Payer — Cumulative PnL Components (signal-active days only)", fontsize=13)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative return (%, additive)")
+    ax.legend(fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150)
+    plt.show(block=False)

@@ -42,9 +42,9 @@ import numpy as np
 
 # sys.path.insert: prepend this file's directory so sibling modules (data, backtest, plot) are importable
 sys.path.insert(0, os.path.dirname(__file__))
-from data     import fetch_carryless_dgs2_returns
+from data     import fetch_carryless_dgs2_returns, fetch_dgs2_full_pnl
 from backtest import annualised_stats, rolling_sharpe, event_time_returns, calc_strat_ret
-from plot     import equity_curve, event_time_plot, rolling_sharpe_plot, cycle_breakdown
+from plot     import equity_curve, event_time_plot, rolling_sharpe_plot, cycle_breakdown, carry_decomposition_plot, pnl_components_timeseries
 from utils.fred_utils import fetch_fred_dataframe
 from benchmark import ORACLE_CYCLES
 
@@ -356,20 +356,31 @@ def main():
     for c in cycles_all:
         print(f"    {c['label']}  entry={c['first_hike'].date()}  exit={c['last_hike'].date()}")
 
-    print("\nFetching DGS2 duration-approximated returns (FRED, back to 1976)...")
-    ret_dgs2 = fetch_carryless_dgs2_returns(api_key, start="1976-01-01")
-    print(f"  DGS2: {ret_dgs2.index[0].date()} to {ret_dgs2.index[-1].date()}")
+    print("\nFetching DGS2 PnL decomposition (FRED, back to 1976)...")
+    pnl_full = fetch_dgs2_full_pnl(api_key, start="1976-01-01")
+    print(f"  DGS2: {pnl_full.index[0].date()} to {pnl_full.index[-1].date()}")
 
-    df_dgs2 = _run("DGS2 signal-driven payer (price-only, dynamic duration, no carry/roll)", ret_dgs2, cycles_all)
+    # price-only series: pure yield-move signal, no carry drag
+    ret_price = pnl_full["price_ret"].rename("ret")
+    # full series: price move + funding carry + roll-down carry
+    ret_total = pnl_full["total_ret"].rename("ret")
+
+    df_price = _run("DGS2 price-only (no carry)", ret_price, cycles_all)
+    df_total = _run("DGS2 total (price + carry)", ret_total, cycles_all)
 
     print("\nGenerating plots...")
-    ev_first = event_time_returns(ret_dgs2, cycles_all, anchor="first_hike", window=120)
-    ev_last  = event_time_returns(ret_dgs2, cycles_all, anchor="last_hike",  window=120)
-    equity_curve(df_dgs2, cycles_all, instrument="DGS2 Signal-Driven", oracle_cycles=ORACLE_CYCLES)
+    ev_first = event_time_returns(ret_price, cycles_all, anchor="first_hike", window=120)
+    ev_last  = event_time_returns(ret_price, cycles_all, anchor="last_hike",  window=120)
+    equity_curve(df_price, cycles_all, instrument="DGS2 Price-Only", oracle_cycles=ORACLE_CYCLES)
+    equity_curve(df_total, cycles_all, instrument="DGS2 Total (with carry)", oracle_cycles=ORACLE_CYCLES)
     event_time_plot(ev_first, anchor_label="signal on — DGS2")
     event_time_plot(ev_last,  anchor_label="signal off — DGS2")
-    cycle_breakdown(df_dgs2, cycles_all, instrument="DGS2 Signal-Driven")
-    rolling_sharpe_plot(rolling_sharpe(df_dgs2), cycles=cycles_all, df=df_dgs2, instrument="DGS2 Signal-Driven")
+    cycle_breakdown(df_price, cycles_all, instrument="DGS2 Price-Only")
+    cycle_breakdown(df_total, cycles_all, instrument="DGS2 Total (with carry)")
+    rolling_sharpe_plot(rolling_sharpe(df_price), cycles=cycles_all, df=df_price, instrument="DGS2 Price-Only")
+    rolling_sharpe_plot(rolling_sharpe(df_total), cycles=cycles_all, df=df_total, instrument="DGS2 Total (with carry)")
+    carry_decomposition_plot(pnl_full, cycles_all)
+    pnl_components_timeseries(pnl_full, signal)
 
     try:
         plt.show()
