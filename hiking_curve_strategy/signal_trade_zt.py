@@ -15,7 +15,7 @@ ZT limitations:
 
 Data sources:
   ZT=F   — CME 2yr Treasury futures (Yahoo Finance, back-adjusted)
-  Signal — inherited from signal_market.detect_signal (FRED spreads)
+  Signal — inherited from signal_logic.detect_signal (FRED spreads)
 """
 
 import os
@@ -29,9 +29,10 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(__file__))
 from data      import fetch_zt, compute_returns, get_zt_roll_dates
 from backtest  import annualised_stats, rolling_sharpe, event_time_returns, calc_strat_ret
+from utils.backtest_utils import cycle_matched_sharpe
 from plot      import equity_curve, event_time_plot, rolling_sharpe_plot, cycle_breakdown
 from benchmark import ORACLE_CYCLES
-from signal_trade_dgs import detect_signal, signal_to_cycles, stats_per_cycle
+from signal_logic import detect_signal, signal_to_cycles, stats_per_cycle
 
 
 # ZT roll cost: 1 tick = $15.625 on a $200k notional contract.
@@ -96,14 +97,27 @@ def main():
         ret_zt, cycles_zt, roll_dates=roll_dates,
     )
 
+    # data_start: ZT=F data begins ~2002; use the actual first return date
+    DATA_START = ret_zt.index[0]
+
+    cms_zt = cycle_matched_sharpe(df_zt, cycles_zt)
+    print(f"\nCycle-matched Sharpe (payer-active days only, pooled across all ZT cycles):")
+    print(f"  Payer: {cms_zt['payer_sharpe']:.3f}   "
+          f"Buy-hold same window: {cms_zt['bh_sharpe']:.3f}   "
+          f"({cms_zt['payer_days']} days)")
+
     print("\nGenerating plots...")
     ev_first = event_time_returns(ret_zt, cycles_zt, anchor="first_hike", window=120)
     ev_last  = event_time_returns(ret_zt, cycles_zt, anchor="last_hike",  window=120)
-    equity_curve(df_zt, cycles_zt, instrument="ZT Futures Signal-Driven", oracle_cycles=ORACLE_CYCLES)
+    equity_curve(df_zt, cycles_zt, instrument="ZT Futures Signal-Driven",
+                 oracle_cycles=ORACLE_CYCLES, data_start=DATA_START,
+                 raw_price=zt_prices["price"])
     event_time_plot(ev_first, anchor_label="signal on — ZT")
     event_time_plot(ev_last,  anchor_label="signal off — ZT")
-    cycle_breakdown(df_zt, cycles_zt, instrument="ZT Futures Signal-Driven")
-    rolling_sharpe_plot(rolling_sharpe(df_zt), cycles=cycles_zt, df=df_zt, instrument="ZT Futures Signal-Driven")
+    cycle_breakdown(df_zt, cycles_zt, instrument="ZT Futures Signal-Driven",
+                    cycle_matched_sharpes=cms_zt)
+    rolling_sharpe_plot(rolling_sharpe(df_zt), cycles=cycles_zt, df=df_zt,
+                        instrument="ZT Futures Signal-Driven", data_start=DATA_START)
 
     try:
         plt.show()

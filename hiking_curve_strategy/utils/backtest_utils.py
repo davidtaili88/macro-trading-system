@@ -50,6 +50,39 @@ def rolling_sharpe(df: pd.DataFrame, window: int = TRADING_DAYS) -> pd.Series:
     return (roll_mean / roll_vol).rename("rolling_sharpe")
 
 
+def cycle_matched_sharpe(df: pd.DataFrame, cycles: list[dict]) -> dict:
+    """
+    Aggregate Sharpe computed only over the periods we actually hold the payer.
+
+    For each cycle, extract the payer-active window (signal == -1) and the
+    equivalent buy-hold window (same dates, bond_ret).  Pool all those windows
+    together into two single return streams, then compute annualised Sharpe for
+    each.  This avoids diluting the Sharpe with flat/off-signal days and gives
+    a like-for-like comparison of payer vs buy-hold *in the same market windows*.
+    """
+    payer_days: list[pd.Series] = []
+    bh_days:    list[pd.Series] = []
+
+    for c in cycles:
+        mask = (df.index >= c["first_hike"]) & (df.index <= c["last_hike"]) & (df["signal"] == -1)
+        payer_days.append(df.loc[mask, "strat_ret"].dropna())
+        bh_days.append(df.loc[mask, "bond_ret"].dropna())
+
+    def _sharpe(parts: list[pd.Series]) -> float:
+        r = pd.concat(parts).dropna()
+        if len(r) < 5:
+            return float("nan")
+        ann_ret = r.mean() * TRADING_DAYS
+        ann_vol = r.std() * np.sqrt(TRADING_DAYS)
+        return round(ann_ret / ann_vol, 3) if ann_vol > 0 else float("nan")
+
+    return {
+        "payer_sharpe":   _sharpe(payer_days),
+        "bh_sharpe":      _sharpe(bh_days),
+        "payer_days":     sum(len(p) for p in payer_days),
+    }
+
+
 def event_time_returns(
     returns: pd.Series,
     cycles: list[dict],
