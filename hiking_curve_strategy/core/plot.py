@@ -63,57 +63,25 @@ def equity_curve(
         fig, ax = plt.subplots(figsize=(13, 5))
         ax_latch = None
 
-    # ── build a mask for days where the payer is active ───────────────────
-    in_payer = (plot_df["signal"] == -1)
-
-    # ── blended strategy: short bonds when signal on, long bonds when off ─
-    # strat_ret already contains -bond_ret on payer days and 0 on flat days.
-    # Replace the flat-day zeros with +bond_ret so we compound continuously.
-    # fillna(0): the return series' first day is always NaN (pct_change has no
-    # prior price to diff against) — left unfilled, cumprod() propagates that
-    # NaN through every subsequent day, silently blanking the whole curve.
-    blended_ret = plot_df["strat_ret"].copy()
-    flat_mask   = plot_df["signal"] == 0
-    blended_ret[flat_mask] = plot_df.loc[flat_mask, "bond_ret"]
-    blended_equity = (1 + blended_ret.fillna(0)).cumprod()
-
-    # ── buy-hold: same base as blended so the two start at 1.0 together ──
-    raw_bh = (1 + plot_df["bond_ret"].fillna(0)).cumprod()
+    # ── build curves ──────────────────────────────────────────────────────
+    # buy-hold: long bonds the whole period
+    raw_bh = (1 + plot_df["bond_ret"]).cumprod()
     base   = raw_bh.iloc[0] if len(raw_bh) > 0 else 1.0
     bh     = raw_bh / base
-    strat  = blended_equity / blended_equity.iloc[0]
 
-    # ── buy-hold line: full period, muted reference ────────────────────────
+    # strategy: cum_equity from calc_strat_ret is flat (=1) when signal is off
+    # and compounds payer returns only during active windows — keep that as-is.
+    strat = plot_df["cum_equity"] / plot_df["cum_equity"].iloc[0]
+
+    # ── buy-hold line ─────────────────────────────────────────────────────
     ax.plot(bh.index, bh,
             color="#DC143C", lw=1.0, alpha=0.6,
             label="Buy-hold bonds (long, reference)")
 
-    # ── strategy curve: blue in payer windows, grey when long ─────────────
-    # Walk contiguous segments and paint each the right color.
-    _payer_label_added = False
-    _flat_label_added  = False
-
-    changes = in_payer.astype(int).diff().fillna(0)
-    seg_starts = list(plot_df.index[changes != 0])
-    if len(plot_df) > 0:
-        seg_starts = [plot_df.index[0]] + seg_starts
-    seg_starts_pos = [plot_df.index.get_loc(s) for s in seg_starts]
-    seg_ends_pos   = seg_starts_pos[1:] + [len(plot_df)]
-
-    for s_pos, e_pos in zip(seg_starts_pos, seg_ends_pos):
-        seg  = strat.iloc[s_pos : e_pos + 1]   # +1 so adjacent segments connect
-        is_p = bool(in_payer.iloc[s_pos])
-        if is_p:
-            color = "#2a78d6"
-            lw    = 1.8
-            label = "Strategy (signal on: payer)" if not _payer_label_added else None
-            _payer_label_added = True
-        else:
-            color = "#c3c2b7"
-            lw    = 1.0
-            label = "Strategy (signal off: long bonds)" if not _flat_label_added else None
-            _flat_label_added = True
-        ax.plot(seg.index, seg.values, color=color, lw=lw, label=label)
+    # ── strategy curve ────────────────────────────────────────────────────
+    ax.plot(strat.index, strat.values,
+            color="#2a78d6", lw=1.5,
+            label="Payer strategy (flat when signal off)")
 
     # ── shade active payer windows ─────────────────────────────────────────
     for i, c in enumerate(cycles):
@@ -350,7 +318,7 @@ def cycle_breakdown(
         print("No in-sample cycles to plot.")
         return
 
-    x     = np.arange(len(labels))
+    num_cycles     = np.arange(len(labels))
     width = 0.38                      # bar width — pair fits within each group
     gap   = 0.02                      # 2px surface gap between adjacent bars
 
@@ -358,40 +326,40 @@ def cycle_breakdown(
     C_PAYER = "#2a78d6"
     C_BH    = "#e34948"
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4))
+    fig, (ax_ann_returns, ax_ann_sharpe) = plt.subplots(1, 2, figsize=(13, 4))
 
     # ── annualised return subplot ──────────────────────────────────────────
-    ax1.bar(x - (width / 2 + gap / 2), payer_rets, width,
+    ax_ann_returns.bar(num_cycles - (width / 2 + gap / 2), payer_rets, width,
             color=C_PAYER, label="Payer (signal on)")
-    ax1.bar(x + (width / 2 + gap / 2), bh_rets, width,
+    ax_ann_returns.bar(num_cycles + (width / 2 + gap / 2), bh_rets, width,
             color=C_BH,    label="Buy-hold bonds (same window)")
-    ax1.axhline(0, color="#0b0b0b", lw=0.8)
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
-    ax1.set_title(f"Ann. Return (%) per Cycle — {instrument}", fontsize=11)
-    ax1.set_ylabel("Ann. Return (%)")
-    ax1.legend(fontsize=8)
-    ax1.grid(axis="y", color="#e1e0d9", lw=0.8, linestyle="-")
+    ax_ann_returns.axhline(0, color="#0b0b0b", lw=0.8)
+    ax_ann_returns.set_xticks(num_cycles)
+    ax_ann_returns.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
+    ax_ann_returns.set_title(f"Ann. Return (%) per Cycle — {instrument}", fontsize=11)
+    ax_ann_returns.set_ylabel("Ann. Return (%)")
+    ax_ann_returns.legend(fontsize=8)
+    ax_ann_returns.grid(axis="y", color="#e1e0d9", lw=0.8, linestyle="-")
 
     # ── Sharpe subplot ────────────────────────────────────────────────────
-    ax2.bar(x - (width / 2 + gap / 2), payer_sharpes, width,
+    ax_ann_sharpe.bar(num_cycles - (width / 2 + gap / 2), payer_sharpes, width,
             color=C_PAYER, label="Payer (signal on)")
-    ax2.bar(x + (width / 2 + gap / 2), bh_sharpes, width,
+    ax_ann_sharpe.bar(num_cycles + (width / 2 + gap / 2), bh_sharpes, width,
             color=C_BH,    label="Buy-hold bonds (same window)")
-    ax2.axhline(0, color="#0b0b0b", lw=0.8)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
-    ax2.set_title(f"Sharpe per Cycle — {instrument}", fontsize=11)
-    ax2.set_ylabel("Sharpe")
-    ax2.legend(fontsize=8)
-    ax2.grid(axis="y", color="#e1e0d9", lw=0.8, linestyle="-")
+    ax_ann_sharpe.axhline(0, color="#0b0b0b", lw=0.8)
+    ax_ann_sharpe.set_xticks(num_cycles)
+    ax_ann_sharpe.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
+    ax_ann_sharpe.set_title(f"Sharpe per Cycle — {instrument}", fontsize=11)
+    ax_ann_sharpe.set_ylabel("Sharpe")
+    ax_ann_sharpe.legend(fontsize=8)
+    ax_ann_sharpe.grid(axis="y", color="#e1e0d9", lw=0.8, linestyle="-")
 
     # aggregated Sharpe annotation above the Sharpe subplot
     if cycle_matched_sharpes is not None:
         ps = cycle_matched_sharpes.get("payer_sharpe", float("nan"))
         bs = cycle_matched_sharpes.get("bh_sharpe",    float("nan"))
         nd = cycle_matched_sharpes.get("payer_days",   0)
-        ax2.set_xlabel(
+        ax_ann_sharpe.set_xlabel(
             f"Pooled across all cycles ({nd} days): "
             f"Payer Sharpe = {ps:.2f}   Buy-hold Sharpe = {bs:.2f}",
             fontsize=8, color="#52514e",

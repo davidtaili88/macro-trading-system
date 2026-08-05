@@ -26,13 +26,14 @@ warnings.filterwarnings("ignore")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import _paths  # noqa: F401 — registers core/, benchmark/, utils/ on sys.path
 from data      import fetch_zt, compute_returns, get_zt_roll_dates
-from backtest  import annualised_stats, rolling_sharpe, event_time_returns, calc_strat_ret
+from backtest  import annualised_stats, rolling_sharpe, event_time_returns, calc_strat_ret, cycle_pnl
 from utils.backtest_utils import cycle_matched_sharpe
 from plot      import equity_curve, event_time_plot, rolling_sharpe_plot, cycle_breakdown
-from benchmark import ORACLE_CYCLES
-from signal_logic import detect_signal, signal_to_cycles, stats_per_cycle
+from benchmark import POST2003_FED_HIKE_CYCLES
+from signal_logic import detect_signal, signal_to_cycles
 
 
 # ZT roll cost: 1 tick = $15.625 on a $200k notional contract.
@@ -43,20 +44,18 @@ ZT_ROLL_COST = 0.000080  # 0.8bp per roll, deducted on each roll date when short
 def _run(name: str, ret: pd.Series, cycles: list[dict],
          roll_dates: pd.DatetimeIndex | None = None) -> pd.DataFrame:
     """Run signal-driven backtest, print summary, return df."""
-    df = calc_strat_ret(
-        ret, cycles,
-        entry_days_before_first=0,
-        exit_days_before_last=0,
-        roll_dates=roll_dates,
-        roll_cost=ZT_ROLL_COST if roll_dates is not None else 0.0,
-    )
+    df = calc_strat_ret(ret, cycles, roll_dates=roll_dates,
+                        roll_cost=ZT_ROLL_COST if roll_dates is not None else 0.0)
     stats = annualised_stats(df)
     print(f"\n{'='*55}")
     print(f"  {name}")
     print(f"{'='*55}")
     print(stats.to_string())
-    print()
-    print(stats_per_cycle(df, ret, cycles).to_string())
+    per_cycle, pooled = cycle_pnl(ret, cycles)
+    print("\nPer-cycle compounded payer P&L:")
+    for label, pnl in per_cycle.items():
+        print(f"  {label:<40}  {pnl*100:+.2f}%")
+    print(f"  {'pooled (all cycles)':<40}  {pooled*100:+.2f}%")
     return df
 
 
@@ -68,8 +67,8 @@ def main():
         print("Set FRED_API_KEY in .env and re-run.")
         return
 
-    print("Detecting signal (FRED spreads, from 1976)...")
-    signal = detect_signal(api_key, start="1976-01-01")
+    print("Detecting signal (FRED spreads, from 1982)...")
+    signal = detect_signal(api_key, start="1982-10-01")
     cycles_all = signal_to_cycles(signal)
 
     if not cycles_all:
@@ -110,7 +109,7 @@ def main():
     ev_first = event_time_returns(ret_zt, cycles_zt, anchor="first_hike", window=120)
     ev_last  = event_time_returns(ret_zt, cycles_zt, anchor="last_hike",  window=120)
     equity_curve(df_zt, cycles_zt, instrument="ZT Futures Signal-Driven",
-                 oracle_cycles=ORACLE_CYCLES, data_start=DATA_START,
+                 oracle_cycles=POST2003_FED_HIKE_CYCLES, data_start=DATA_START,
                  raw_price=zt_prices["price"])
     event_time_plot(ev_first, anchor_label="signal on — ZT")
     event_time_plot(ev_last,  anchor_label="signal off — ZT")

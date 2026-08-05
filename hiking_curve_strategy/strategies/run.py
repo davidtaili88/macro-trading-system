@@ -19,12 +19,13 @@ warnings.filterwarnings("ignore")
 
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.dirname(__file__))
-from signal_market import main as signal_market_main
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import _paths  # noqa: F401 — registers core/, benchmark/, utils/ on sys.path
+from strategies.signal_trade_dgs import main as signal_trade_dgs_main
 
 
 def main():
-    signal_market_main()
+    signal_trade_dgs_main()
 
 
 if __name__ == "__main__":

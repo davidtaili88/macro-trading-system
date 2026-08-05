@@ -4,7 +4,7 @@ Forward-implied vs. realized yield test.
 Question: does the signal predict yield moves BEYOND what the forward curve
 already priced in at entry, or does it only catch moves the market already
 expected (in which case ZT futures P&L — carry-netted — should be flat even
-though DGS2/SHY cash P&L looks profitable, since cash carry bleed is what
+though DGS2 cash P&L looks profitable, since cash carry bleed is what
 makes an "already priced in" move look free money on paper)?
 
 Construction of the forward-implied yield:
@@ -41,7 +41,8 @@ warnings.filterwarnings("ignore")
 
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import _paths  # noqa: F401 — registers core/, benchmark/, utils/ on sys.path
 from signal_logic import detect_signal, signal_to_cycles
 from utils.fred_utils import fetch_fred_dataframe
 
@@ -119,8 +120,8 @@ def main():
         print("Set FRED_API_KEY in .env and re-run.")
         return
 
-    print("Detecting signal (FRED spreads, from 1976)...")
-    signal = detect_signal(api_key, start="1976-01-01")
+    print("Detecting signal (FRED spreads, from 1982)...")
+    signal = detect_signal(api_key, start="1982-10-01")
     cycles = signal_to_cycles(signal)
     if not cycles:
         print("No signal episodes detected.")

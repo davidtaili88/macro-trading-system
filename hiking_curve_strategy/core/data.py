@@ -1,11 +1,7 @@
 """
 Data fetching and processing for the hiking cycle 2-year payer strategy.
 
-Three return series are available for backtesting:
-
-  SHY   — iShares 1-3yr Treasury ETF (Yahoo Finance).
-           Cash bond proxy: ~1.9yr duration, but carry bleeds against a short
-           position every day, suppressing payer P&L on gradual hiking cycles.
+Two return series are available for backtesting:
 
   ZT=F  — CME 2yr Treasury futures front month (Yahoo Finance).
            Purer duration expression: carry is netted into the roll basis rather
@@ -18,7 +14,7 @@ Three return series are available for backtesting:
            Carry is intentionally excluded to isolate the pure yield-move signal.
            Convexity (½ * C * Δy²) is negligible at the 2yr point (C ≈ 5) and
            omitted. This series goes back to 1976 — covering all historical
-           hiking cycles — which SHY and ZT cannot reach.
+           hiking cycles — which ZT cannot reach.
 
 Hiking cycle dates are NOT stored here. They are supplied by the signal engine.
 """
@@ -28,10 +24,9 @@ import pandas as pd
 from fredapi import Fred
 
 
-TICKER_SHY = "SHY"   # iShares 1-3yr Treasury ETF — cash bond, ~1.9yr duration, carry bleeds against payer
 TICKER_ZT  = "ZT=F"  # CME 2yr Treasury futures front month — purer duration bet, carry netted in basis
 
-START = "2002-01-01"   # SHY inception ~2002; ZT=F also available from ~2002
+START = "2002-01-01"   # ZT=F available from ~2002
 END   = None           # through today
 
 # str | None is union syntax: end accepts either type string or a None
@@ -52,18 +47,13 @@ def _download(ticker: str, start: str, end: str | None) -> pd.DataFrame:
     return raw.dropna().to_frame()
 
 
-def fetch_shy(start: str = START, end: str | None = END) -> pd.DataFrame:
-    """Return adjusted close prices for SHY at daily frequency."""
-    return _download(TICKER_SHY, start, end)
-
-
 def fetch_zt(start: str = START, end: str | None = END) -> pd.DataFrame:
     """
     Return back-adjusted close prices for ZT (2yr Treasury futures) at daily frequency.
 
     auto_adjust=True removes roll gaps so pct_change() gives clean returns without
     quarterly expiry jumps. Futures carry is netted into the basis rather than bleeding
-    directly into P&L, making ZT a purer duration expression than SHY for a payer trade.
+    directly into P&L, making ZT a pure duration expression for a payer trade.
     """
     return _download(TICKER_ZT, start, end)
 
@@ -90,13 +80,13 @@ def _modified_duration(y: pd.Series, N: float = 2.0, k: int = 2) -> pd.Series:
     d_mac = (1 / y) * (1 - 1 / (1 + y / k) ** (N * k))
     return d_mac / (1 + y / k)
 
-
+# Compute daily carryless returns for if we held dgs2 long
 def fetch_carryless_dgs2_returns(
     fred_api_key: str,
     start: str = "1976-01-01",
 ) -> pd.Series:
     """
-    Reconstruct daily price-only returns for a constant-maturity 2yr Treasury
+    Reconstruct daily price-only LONG returns for a constant-maturity 2yr Treasury
     from the FRED DGS2 yield series, using the first-order duration approximation:
 
         r_t = -D_mod(y_t) * Δy_t
@@ -104,10 +94,6 @@ def fetch_carryless_dgs2_returns(
     D_mod is computed daily from the par-bond closed form rather than fixed at
     1.921 — duration breathes with the rate level (higher yields → shorter
     duration; lower yields → longer duration).
-
-    Carry is intentionally excluded — this isolates the pure price/yield signal.
-    Convexity (½ * C * Δy²) is omitted; at C ≈ 5 it contributes < 0.03bp per
-    typical daily move versus ~19bp from duration — negligible at the 2yr point.
 
     Returns a Series named 'ret' starting from `start`, covering back to 1976.
     """
@@ -120,28 +106,32 @@ def fetch_carryless_dgs2_returns(
     ret = (-D * dy).rename("ret")
     return ret.dropna()
 
-
+# Compute daily returns for if we held dgs2 long
 def fetch_dgs2_full_pnl(
     fred_api_key: str,
     start: str = "1976-01-01",
 ) -> pd.DataFrame:
     """
-    Daily P&L decomposition for a short constant-maturity 2yr Treasury position.
+    Daily P&L decomposition for a LONG constant-maturity 2yr Treasury position.
 
     Three components, all in decimal return space (multiply by notional for $):
 
         price_ret   = -D_mod * Δy
-                      pure yield-move P&L; positive when yields rise (short profits)
+                      pure yield-move P&L; negative when yields rise (price falls)
 
-        carry_fund  = -(2y - fed_funds) / (250 * N)
-                      net coupon cost: coupon owed to bond lender minus interest
-                      earned on cash collateral at fed funds rate; negative when
-                      curve is upsloping (2y > fed_funds)
+        carry_fund  = +(2y - fed_funds) / 250
+                      net coupon: coupon received to bond holder minus interest
+                      lost on cash collateral at fed funds rate. (2y - fed_funds) is
+                      already an annualised rate of return (% of notional per
+                      year), so de-annualising to a daily rate only needs a
+                      trading-days divisor — no duration or N_YEARS scaling,
+                      unlike price_ret/carry_roll which convert a yield-level
+                      change into a price change and so do need D.
 
-        carry_roll  = -D_mod * (2y - 1y) / 250
-                      roll-down cost: bond ages 1/250yr per day, sliding down the
-                      upsloping curve so its yield drops and price rises — a loss
-                      for a short; duration-adjusted to match return space
+        carry_roll  = + D_mod * (2y - 1y) / 250
+                      roll-down: bond ages 1/250yr per day, sliding down the
+                      upsloping curve so its yield drops and price rises.
+                       duration-adjusted to match return space
 
         total_ret   = price_ret + carry_fund + carry_roll
 
@@ -165,18 +155,24 @@ def fetch_dgs2_full_pnl(
     ff  = df["dff"]  / 100
 
     D  = _modified_duration(y2, N=2.0, k=2)
-    dy = y2.diff()
 
-    N_YEARS    = 2.0
     TRADE_DAYS = 252
 
-    # all components stored from the LONG bond holder's perspective:
-    #   price_ret  < 0 when yields rise (long holder loses)
+    # price_ret is the SAME -D·Δy series produced by fetch_carryless_dgs2_returns,
+    # which is the single source of truth for the price-only signal. We reuse it
+    # (rather than recomputing -D*y2.diff() here) so the two can never silently
+    # diverge, then reindex onto this frame's joined DGS2∩DGS1∩DFF calendar so it
+    # is row-aligned with the carry components for the total_ret sum. The carryless
+    # series diffs on the DGS2-only calendar; reindexing back to the (equal-or-
+    # shorter) joined calendar is safe — on any gap day the two calendars differ,
+    # the carry terms genuinely need DGS1/DFF and so total_ret must live here.
+    price_ret = fetch_carryless_dgs2_returns(fred_api_key, start=start).reindex(df.index)
+
+    # carry components, from the LONG bond holder's perspective:
     #   carry_fund > 0 when curve upsloping (long holder earns coupon net of repo)
     #   carry_roll > 0 when curve upsloping (long holder gains as bond rolls down)
     # short position = negate all three uniformly
-    price_ret  = -D * dy
-    carry_fund = (y2 - ff) / (TRADE_DAYS * N_YEARS)
+    carry_fund = (y2 - ff) / TRADE_DAYS
     carry_roll = D * (y2 - y1) / TRADE_DAYS
     total_ret  = price_ret + carry_fund + carry_roll
 
