@@ -154,6 +154,7 @@ def main():
         pooled_pct, live_idx,
         flat_floor=FLAT_FLOOR_PP,
         window=VERDICT_WINDOW,
+        pooled_pnl=pooled_pct[live_idx],   # enables the absolute material backstop
     )
 
     pnl_spread_full = max(pooled_pct) - min(pooled_pct)
@@ -191,7 +192,7 @@ def main():
         print(f"     not a needle threaded to P&L. Check the table: behavior should change only at")
         print(f"     the EDGES (below ~225 blocks legitimate second legs; above ~425 stops blocking")
         print(f"     the 2023 SVB whipsaw), and be flat in between.")
-    elif v == "CLIFF":
+    elif v == "FLAG_FOR_REVIEW":
         print(f"     Pooled P&L lurches within one step of {LIVE_VALUE}bp — the (225,425) gap is NOT")
         print(f"     as flat as the comment claims, so 350 is doing more than 'round value in a gap'.")
         print(f"     Read the edges off the table and reconsider; do NOT tune to a P&L peak (n=3).")

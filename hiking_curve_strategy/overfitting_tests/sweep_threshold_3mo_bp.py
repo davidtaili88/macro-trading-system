@@ -157,6 +157,7 @@ def main():
         pooled_pct, live_idx,
         flat_floor=FLAT_FLOOR_PP,
         window=VERDICT_WINDOW,
+        pooled_pnl=pooled_pct[live_idx],   # enables the absolute material backstop
     )
 
     pnl_spread_full = max(pooled_pct) - min(pooled_pct)
@@ -191,7 +192,7 @@ def main():
         print(f"     The step in/out of {LIVE_VALUE}bp is an ordinary-sized wiggle, not an")
         print(f"     outlier — the exact bar is not load-bearing on this data, so 'round value")
         print(f"     in a wide flat band' IS the justification. Document like REENTRY_BLOCK_BP.")
-    elif v == "CLIFF":
+    elif v == "FLAG_FOR_REVIEW":
         print(f"     Pooled P&L lurches by an outlier-sized amount within one step of {LIVE_VALUE}bp,")
         print(f"     so the exact entry bar IS load-bearing and cannot ride on a plateau alibi.")
         print(f"     Read the CORRIDOR EDGES off the sweep table (where n_cycles or a cycle's sign")

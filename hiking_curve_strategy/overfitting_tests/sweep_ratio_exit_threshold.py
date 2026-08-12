@@ -108,6 +108,8 @@ def main():
 
     print(f"Sweeping RATIO_EXIT_THRESHOLD over {SWEEP_VALUES[0]}..{SWEEP_VALUES[-1]} "
           f"(live value = {LIVE_VALUE})...\n")
+    
+    # This is a list of dictionaries
     results = [_run_one(v, api_key, ret_price) for v in SWEEP_VALUES]
 
     # ---- 1) sweep table: cycle count, pooled P&L, exit-date fingerprint ----
@@ -158,6 +160,7 @@ def main():
         pooled_pct, live_idx,
         flat_floor=FLAT_FLOOR_PP,
         window=VERDICT_WINDOW,
+        pooled_pnl=pooled_pct[live_idx],   # enables the absolute material backstop
     )
 
     pnl_spread_full = max(pooled_pct) - min(pooled_pct)
@@ -192,7 +195,7 @@ def main():
         print(f"     The step in/out of {LIVE_VALUE} is an ordinary-sized wiggle, not an")
         print(f"     outlier — the exact value is not load-bearing on this data, so 'round")
         print(f"     value in a wide flat band' IS the justification. Document like REENTRY_BLOCK_BP.")
-    elif v == "CLIFF":
+    elif v == "FLAG_FOR_REVIEW":
         print(f"     Pooled P&L lurches by an outlier-sized amount within one step of {LIVE_VALUE},")
         print(f"     so the exact value IS load-bearing and cannot ride on a plateau alibi. Note the")
         print(f"     value still cannot be DERIVED hindsight-free (late-exit cost needs the unknowable")

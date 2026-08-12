@@ -20,13 +20,25 @@ typical roughness.
 Why MAD, not stdev, and where 1.4826 comes from
 -----------------------------------------------
 MAD (median absolute deviation) = median(|xi - median(x)|): "the typical distance of a
-point from the middle", computed with medians so outliers don't distort it. For NORMAL
-data, MAD = 0.6745 * sigma (0.6745 is the ±radius around the mean capturing the central
-50% of a bell curve — the sibling of "±1 sigma captures 68%"). So to express MAD on the
-same scale as a standard deviation we multiply by 1/0.6745 = 1.4826. That scaling lets
-the literature's "> 3.5 sigma = outlier" cutoff (Iglewicz & Hoaglin's modified z-score)
-carry its intended meaning. The 1.4826 only rescales an already-clean MAD; it never
-re-introduces the outlier the median discarded.
+point from the middle", computed with medians so outliers don't distort it. MAD is a
+valid spread measure for ANY distribution — it assumes nothing.
+
+The 1.4826 factor is a UNIT CONSTANT, not a normality assumption. 1.4826 = 1/0.6745,
+where 0.6745 is a fixed property of the standard normal (its 0.75 quantile). Multiplying
+MAD by it puts MAD on a "standard-deviation-equivalent-IF-normal" scale — like "2.54 cm
+per inch". If the data is NOT normal, 1.4826*MAD is simply not equal to sigma; it is still
+a perfectly good robust spread measure, just on that scale. The data's true distribution
+is never assumed, transformed, or invoked by this step.
+
+Normality enters in EXACTLY ONE place, and it is optional: the choice of the CUTOFF 3.5.
+Iglewicz & Hoaglin picked 3.5 by asking "on normal data, what modified-z is a ~0.05% tail?"
+We use 3.5 as a HEURISTIC SENSITIVITY DIAL — a standard, well-understood trigger for "go
+look at this", exactly like a 3-sigma control-chart limit — NOT as a p-value. We never
+claim "3.5 gives a 0.05% false-positive rate here". If the jumps are fatter-tailed than
+normal, 3.5 simply over-flags relative to the textbook rate, which — since false flags are
+free — is the SAFE direction. Crucially, the fatal direction (missing a real cliff) is
+guarded by the ABSOLUTE material backstop (see classify_plateau), which assumes nothing
+about the distribution — so normality never touches the safety-critical path.
 
 Two guards, for the two ways this can mislead on small samples
 --------------------------------------------------------------
@@ -54,6 +66,13 @@ MAD_TO_SIGMA       = 1.4826
 # fraction of jumps flagged as cliffs above which we declare the sweep has no stable
 # region (approaching the median/MAD 50% breakdown point; kept conservative below 0.5).
 BREAKDOWN_FRACTION = 0.40
+# ABSOLUTE material backstop: a jump >= this fraction of |pooled P&L| is flagged for
+# review REGARDLESS of the relative z-score. This is the distribution-free, noise-proof
+# safety net that catches the cliffs the relative z misses on noisy curves. Expressed as
+# a FRACTION (not a fixed pp) so it scales across the price-only and carry-inclusive
+# series (carry P&L is ~3x smaller). A disclosed risk tolerance, rounded DOWN (over-
+# flagging is free); ~3% ≈ half a small cycle's P&L on the price-only series.
+MATERIAL_FRACTION  = 0.03
 
 
 def robust_sigma(values):
@@ -85,24 +104,63 @@ def classify_plateau(
     flat_floor,
     z_cutoff=DEFAULT_Z_CUTOFF,
     window=None,
+    pooled_pnl=None,
+    material_frac=MATERIAL_FRACTION,
 ):
-    """Classify whether the live value sits on a plateau or a cliff.
+    """Classify whether the live value sits on a plateau, or should be FLAGGED FOR REVIEW.
 
-    outcomes:    1-D sequence of outcome values (e.g. pooled P&L %), one per swept value,
-                 in sweep order.
-    live_idx:    index of the live parameter value within `outcomes`.
-    flat_floor:  jumps below this (in outcome units) are economically trivial. If the
-                 LARGEST jump in the examined window is below it, verdict is PLATEAU and
-                 scoring is skipped (handles the MAD≈0 degenerate case).
-    z_cutoff:    robust-z above which a jump is flagged a cliff (soft reference line).
-    window:      if given, only jumps within +/- `window` sweep steps of live_idx are
-                 examined (a 'sensible range to look at' — a distant cliff at the far end
-                 of an over-wide grid should not condemn the value the strategy uses, and
-                 restricting the window also keeps the robust stats from being dominated
-                 by a faraway regime). None => use the whole sweep.
+    IMPORTANT — this is a CONSERVATIVE SCREEN, not a classifier. The costs are asymmetric:
+    a false flag costs a two-minute human investigation (cheap); a MISSED cliff means
+    shipping an overfit parameter (fatal). So the verdict "FLAG_FOR_REVIEW" means exactly
+    that — "a human should look at this" — NOT "this is definitely a cliff". The design
+    errs toward over-flagging on purpose. The ONLY error we work to eliminate is a false
+    PLATEAU (a real cliff called flat); false FLAG_FOR_REVIEWs are acceptable.
+
+    TWO TESTS, WORKING TOGETHER (a backstop, not equal partners):
+      1. RELATIVE screen (robust z on jumps): flag a jump that is a large OUTLIER versus
+         the curve's own roughness. Self-scaling, but FAILS on noisy curves — a real cliff
+         hidden in a jumpy background is not a relative outlier, so the z can MISS it. This
+         is the failure mode that motivated test 2.
+      2. ABSOLUTE backstop (material bar): flag any jump >= `material_frac` * |pooled_pnl|
+         REGARDLESS of the z. Distribution-free and noise-proof — it cannot be hidden by a
+         jumpy background, so it catches exactly the cliffs the z misses. Because it is a
+         FRACTION of pooled P&L (not a fixed pp), it scales correctly across the price-only
+         and carry-inclusive series (carry P&L is ~3x smaller, so a fixed pp bar would be
+         far too permissive on it).
+
+    WHAT THIS STILL MISSES (disclosed): only cliffs BELOW the material bar — so every
+    possible miss is economically immaterial BY CONSTRUCTION (anything >= material_frac of
+    pooled is flagged unconditionally). Within that sub-material band, if the jump is also
+    small relative to the jump-noise, cliff and noise are genuinely indistinguishable
+    locally — but since it is sub-material anyway, that is an acceptable miss, not a
+    dangerous one. The mitigation for that regime is keeping the sweep SMOOTH (fine grid),
+    not a cleverer threshold.
+
+    outcomes:      1-D sequence of outcome values (e.g. pooled P&L %), one per swept value,
+                   in sweep order.
+    live_idx:      index of the live parameter value within `outcomes`.
+    flat_floor:    jumps below this (in outcome units) are economically trivial. If the
+                   LARGEST jump in the examined window is below it, verdict is PLATEAU and
+                   scoring is skipped (handles the MAD≈0 degenerate case).
+    z_cutoff:      robust-z above which a jump is flagged (the RELATIVE screen). A heuristic
+                   sensitivity dial calibrated on normal tails, NOT a p-value — we make no
+                   probabilistic claim from it (see robust_sigma docstring).
+    window:        if given, only jumps within +/- `window` sweep steps of live_idx are
+                   examined. None => use the whole sweep.
+    pooled_pnl:    the strategy's pooled P&L at the LIVE value, in the SAME units as
+                   `outcomes` (e.g. percent). Enables the ABSOLUTE material backstop. If
+                   None, the backstop is inactive and only the relative z-screen runs
+                   (pre-backstop behaviour, kept for backward compatibility).
+    material_frac: a jump >= material_frac * |pooled_pnl| is flagged regardless of the z.
+                   A DISCLOSED, conservatively-low risk tolerance (default 3%), chosen from
+                   a miss-rate-vs-review-rate tradeoff and rounded DOWN because over-
+                   flagging is free.
 
     Returns a dict with the verdict and every raw number behind it, so the caller can
-    print an auditable breakdown and overrule the soft flag by eye.
+    print an auditable breakdown and overrule the soft flag by eye. Verdict is one of
+    "PLATEAU" (confident-flat), "CLIFF" (flag for review), or "NO_STABLE_REGION" (the
+    whole sweep is rough — the parameter itself is erratic and the live value likely got
+    lucky). The extra key "material_review" is True when the ABSOLUTE backstop fired.
     """
     o = np.asarray(outcomes, dtype=float)
     n = len(o)
@@ -126,18 +184,44 @@ def classify_plateau(
         adj.append(jumps_all[live_idx])        # step from live -> (live+1)
     adj_jumps = np.array(adj)
 
+    # ---- absolute material backstop threshold ----------------------------------
+    # A jump this large (in outcome units) is flagged for review REGARDLESS of the z.
+    # None => backstop inactive (pooled_pnl not supplied): pre-backstop behaviour.
+    material_bar = (material_frac * abs(pooled_pnl)) if pooled_pnl is not None else None
+    # does any jump ADJACENT to the live value clear the absolute bar?
+    material_review = bool(
+        material_bar is not None and adj_jumps.size and float(adj_jumps.max()) >= material_bar
+    )
+
     result = {
-        "n_points":       n,
-        "window":         (o[lo_i], o[hi_i]) if window is not None else None,
-        "win_lo_idx":     lo_i,
-        "win_hi_idx":     hi_i,
-        "max_jump":       float(win_jumps.max()) if win_jumps.size else 0.0,
-        "median_jump":    float(np.median(win_jumps)) if win_jumps.size else 0.0,
-        "robust_sigma":   float(robust_sigma(win_jumps)) if win_jumps.size else 0.0,
-        "adj_jumps":      [float(x) for x in adj_jumps],
-        "flat_floor":     flat_floor,
-        "z_cutoff":       z_cutoff,
+        "n_points":        n,
+        "window":          (o[lo_i], o[hi_i]) if window is not None else None,
+        "win_lo_idx":      lo_i,
+        "win_hi_idx":      hi_i,
+        "max_jump":        float(win_jumps.max()) if win_jumps.size else 0.0,
+        "median_jump":     float(np.median(win_jumps)) if win_jumps.size else 0.0,
+        "robust_sigma":    float(robust_sigma(win_jumps)) if win_jumps.size else 0.0,
+        "adj_jumps":       [float(x) for x in adj_jumps],
+        "flat_floor":      flat_floor,
+        "z_cutoff":        z_cutoff,
+        "material_bar":    material_bar,
+        "material_review": material_review,
     }
+
+    # ---- BACKSTOP: absolute material jump adjacent to live -> flag, no matter what ----
+    # Checked BEFORE the flat-floor guard: a real cliff sitting on an otherwise-flat curve
+    # must never be dismissed as "trivially flat". This is the noise-proof safety net and
+    # the ONLY test guarding the fatal direction (a missed real cliff), so it wins.
+    if material_review:
+        result["verdict"]    = "FLAG_FOR_REVIEW"
+        result["reason"]     = (f"adjacent jump {max(adj_jumps):.3f} >= material bar "
+                                f"{material_bar:.3f} ({material_frac:.0%} of pooled) "
+                                f"[absolute backstop — noise-proof, z not consulted]")
+        # z not computed on this path (the backstop is distribution-free by design);
+        # report the raw adjacent jumps so the caller still sees the evidence.
+        result["adj_z"]      = [float("nan") for _ in adj_jumps]
+        result["cliff_frac"] = 0.0
+        return result
 
     # ---- guard 1: everything is trivially flat ---------------------------------
     if result["max_jump"] < flat_floor:
@@ -192,7 +276,7 @@ def classify_plateau(
 
     # ---- normal case: is the live value on an edge? ----------------------------
     on_cliff = any(z > z_cutoff for z in adj_z)
-    result["verdict"] = "CLIFF" if on_cliff else "PLATEAU"
+    result["verdict"] = "FLAG_FOR_REVIEW" if on_cliff else "PLATEAU"
     result["reason"]  = (
         f"adjacent jump z={max(adj_z):.2f} > {z_cutoff}" if on_cliff
         else f"adjacent jump z={max(adj_z, default=0.0):.2f} <= {z_cutoff}"
