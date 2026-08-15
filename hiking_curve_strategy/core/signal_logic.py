@@ -2,9 +2,10 @@
 Market-driven signal logic for the hiking cycle 2-year payer strategy.
 
 Both entry AND exit are fully market-driven — no oracle FOMC dates used.
-Instrument-agnostic: produces cycle windows (entry/exit dates) that any
-run script (signal_trade_dgs.py, signal_trade_zt.py, ...) applies to its
-own return series via backtest.calc_strat_ret.
+Instrument-agnostic: produces cycle windows (entry/exit dates) that the DGS2
+run script (signal_trade_dgs.py) applies to its return series via
+backtest.calc_strat_ret. The same windows also drive the side futures
+tradability experiment.
 
 Entry: first day BOTH spread conditions hold inside a confirmed post-easing hold:
   - 3mo spread (DGS3MO - DFF) > 12bp  → hike priced within ~3 months
@@ -25,12 +26,12 @@ Exit: first day ANY of the following holds:
     cycle being over) doesn't trip it. Disarmed permanently once a real hike
     lands, since at that point the cycle is confirmed and the crude level
     exit below takes over.
-  - 1yr spread < -25bp  → market pricing net cuts over the next year
-  - 5-day rolling avg of 3mo spread (capped at ±100bp) < -50bp  → market
-    aggressively pricing near-term cuts. Rolling average smooths out single-day
-    holiday/thin-market spikes; the ±100bp cap prevents extreme outlier prints
-    from dominating the average. Responds to sustained drift below threshold
-    rather than requiring 5 unbroken consecutive days.
+  - level exit: smoothed 1yr spread < THRESHOLD_1YR_EXIT AND smoothed 3mo spread
+    < THRESHOLD_3MO_EXIT (both must hold) → market pricing net cuts across the
+    curve. Both spreads are smoothed over EXIT_SMOOTH_WINDOW_DAYS, and the 3mo
+    leg is capped at ±EXIT_CAP_BP before smoothing so single-day holiday/thin-
+    market spikes can't trip it. Responds to sustained drift below the thresholds
+    rather than requiring a run of unbroken consecutive days.
   This mirrors the book's observation that 2s rally strongly once the hiking
   cycle is priced out, and that the trough in bond returns (the best exit
   point) coincides with the market starting to price cuts — not with a
@@ -80,19 +81,10 @@ THRESHOLD_3MO_BP   = 12   # bp: entry — market must price hike within ~3 month
 # not real hike pricing).
 ENTRY_SMOOTH_WINDOW_DAYS = 5  # trading days: rolling mean window on entry spreads
 EXIT_SMOOTH_WINDOW_DAYS  = 5  # trading days: rolling window on exit spreads (both 1yr and 3mo)
-EXIT_SMOOTH_METHOD       = "mean"  # "mean" or "median". NOTE: median was tested to reject the
-                                    # SVB Mar-2023 shock but did NOT remove the spurious 2023
-                                    # re-entry — that episode stems from the ratio exit firing
-                                    # ~7mo EARLY in Dec-2022 (denominator-driven), then re-arming,
-                                    # not from SVB tripping an exit. Median just lagged the good
-                                    # exits for no benefit. Kept "mean". Real fix belongs upstream.
+EXIT_SMOOTH_METHOD       = "mean"  
 
 THRESHOLD_1YR_EXIT = -15  # bp: exit threshold for 1yr spread
-THRESHOLD_3MO_EXIT = 0  # bp: exit threshold for 3mo spread — more negative than 1yr because
-                           #     a -25bp 3mo spread means ~1 cut priced in 3 months, which requires
-                           #     much stronger near-term conviction than -25bp on 1yr (spread over a
-                           #     full year). Tighter thresholds fragment mid-cycle on hike-delivery
-                           #     noise; these are the empirically stable values.
+THRESHOLD_3MO_EXIT = 0  # bp: exit threshold for 3mo spread
 
 # false-promise exit: if no hike has landed yet since entry and smoothed spread_1yr
 # falls back to this level, treat the entry as a failed conviction and exit early.
@@ -138,7 +130,7 @@ FALSE_PROMISE_THRESHOLD_1YR_BP = 25  # bp
 RATIO_EXIT_THRESHOLD = 0.10  # exit when spread_1yr / cum_bp_hiked drops below this
 RATIO_EXIT_FLOOR_BP  = 25    # bp: don't evaluate the ratio until this much hiked since entry
 
-# ── distance-to-neutral guard on the ratio exit (Gate C) ─────────────────────
+# ── distance-to-neutral guard on the ratio exit ──────────────────────────────
 # THEORY: a hiking cycle that is NORMALIZING (lifting policy back up to neutral from a
 # stimulative level — e.g. 2004-06 from 1%, 2015-18 from 0%) is not over until fed funds
 # actually REACHES neutral, regardless of what the spread says. The market's spread/ratio
@@ -148,7 +140,7 @@ RATIO_EXIT_FLOOR_BP  = 25    # bp: don't evaluate the ratio until this much hike
 # Distance-to-neutral measures the missing information directly: how much further the Fed must
 # climb to reach its own neutral rate.
 #
-# GATE C is a ONE-SIDED VETO on the ratio exit: block the ratio exit while fed funds is still
+# This guard is a ONE-SIDED VETO on the ratio exit: block the ratio exit while fed funds is still
 # more than NEUTRAL_VETO_BP BELOW nominal neutral (r* + expected inflation). Because it is an
 # AND on the ratio branch (both the ratio AND "we've climbed close enough to neutral" must
 # hold), it can only ever DELAY a ratio exit, never cause one — so it cannot create new false
@@ -168,7 +160,7 @@ RATIO_EXIT_FLOOR_BP  = 25    # bp: don't evaluate the ratio until this much hike
 # n=1 (only 2018 in-sample) — not built. The guard is shipped WITHOUT the shock override; the
 # 2018 late-hold is an accepted, documented imperfection. See unused_mechanisms/diagnostic_tests/test_neutral_guard.py.
 NEUTRAL_VETO_BP = 15   # bp below nominal neutral: block the ratio exit while gap exceeds this.
-                       # = David's "hold until fed funds is within 15bp of neutral" arrival rule:
+
                        # exit allowed only once we've essentially reached neutral (gap <= 15bp).
                        # Holds the 2004-06 exit to ~Apr-2006 (recovering ~7 of the ~10mo the old
                        # ratio exit gave away in Sep-2005) at +17.3% pooled vs +14.1% unguarded.
@@ -179,10 +171,10 @@ NEUTRAL_VETO_BP = 15   # bp below nominal neutral: block the ratio exit while ga
                        # over-hold but also releases the 2005 veto early, forfeiting most of the
                        # 2004-06 recovery — the whole point of the guard. 15bp keeps the win.
 
-# ── ROC gate on the ratio exit (Gate B) ─────────────────────────────────────
+# ── ROC gate on the ratio exit ───────────────────────────────────────────────
 # The ratio exit above fires on the ratio's LEVEL alone — it can trip purely
 # because the denominator (cum bp hiked) is large, even while the spread is still
-# healthy. Gate B adds a PRECONDITION: only allow the ratio exit when the spread
+# healthy. This gate adds a PRECONDITION: only allow the ratio exit when the spread
 # is genuinely rolling over — i.e. the 21-day MEDIAN of the month-over-month change
 # (spread now minus spread ~21d ago) is below ROC_GATE_BP. Intuition: don't even
 # consider exiting unless there's an independent signal the market wants to stop
@@ -229,12 +221,9 @@ FED_TARGET_MOVE_FLOOR = 0.0001   # 1bp in decimal: noise floor for hike/cut dete
 
 # ──────────────────────────────────────────────────────────────────────────
 
-#Extract cleaned versions of daily spreads of DGS1 and DGS3MO vs DFF and daily Fed targets
 def _load_signal_data(fred_api_key: str, start: str = "1990-01-01") -> tuple[pd.DataFrame, pd.Series]:
     """Load FRED spread data and stitched fed funds target rate."""
-    # fred_utils.fetch_fred_dataframe: downloads DFF, DGS1, DGS3MO from FRED and aligns them into one DataFrame;
-    # mappings of df column name: FRED series ID
-    # fill_method=None keeps only dates where all three series have real observations (inner join),
+    # fill_method=None keeps only dates where all three series have real observations,
     # avoiding stale Treasury yields paired with a live DFF on holidays
     daily_yields = fetch_fred_dataframe(
         fred_api_key,
@@ -243,99 +232,68 @@ def _load_signal_data(fred_api_key: str, start: str = "1990-01-01") -> tuple[pd.
         fill_method=None,
     )
 
-    '''
-    Following block extracts Fed target for each trading day
-    '''
-    # fred_utils.fetch_fred_dataframe: fetch pre-2008 fed funds target rate (DFEDTAR); exact 25bp FOMC steps
+    # stitch the fed funds target: DFEDTAR (pre-2008, exact 25bp FOMC steps) then the
+    # DFEDTARL lower bound (post-2008 ZLB), keeping the last value at the transition date
     target_pre  = fetch_fred_dataframe(fred_api_key, {"target": "DFEDTAR"},  start)["target"]
-    # fred_utils.fetch_fred_dataframe: fetch post-2008 fed funds target lower bound (DFEDTARL)
     target_post = fetch_fred_dataframe(fred_api_key, {"target": "DFEDTARL"}, start)["target"]
-    # pandas.concat: vertically stack the two target Series end-to-end,
-    # then sort by date since it is naturally the only index
     fed_target  = pd.concat([target_pre, target_post]).sort_index()
     # FRED serves DFEDTAR/DFEDTARL as raw percentage points (4.5% -> 4.5); divide by 100
     # so fed_target is decimal like every other yield series in this project (0.045).
     fed_target  = fed_target / 100
-
-    # Syntax is boolean indexing: it keeps values in the dataframe where the boolean in [] == true
-    # drop duplicate index entries at the 2008 ZLB transition,
-    # ~ is the not operator
-    # Loops through all entries of original fed_target, returns true if 
-    # 1. index is not duplicated (unique date)
-    # 2. if index is duplicated, return true for the last occurance of that index
     fed_target  = fed_target[~fed_target.index.duplicated(keep="last")]
-    # pandas Series.reindex: align the stitched target rate to the daily trading index,
-    # forward-filling each FOMC decision across subsequent calendar days
     fed_target  = fed_target.reindex(daily_yields.index, method="ffill")
 
-    #Construct spreads
-    # pandas Series arithmetic: subtract DFF from DGS1 and multiply by 100 to convert to basis points
     daily_yields["spread_1yr_bp"] = (daily_yields["dgs1"]   - daily_yields["dff"]) * 100
-    # pandas Series arithmetic: subtract DFF from DGS3MO and scale to basis points
     daily_yields["spread_3mo_bp"] = (daily_yields["dgs3mo"] - daily_yields["dff"]) * 100
 
-    # pandas Series.diff: day-over-day change; .abs() takes absolute value;
-    # < 50 masks implausible single-day jumps from holiday/thin-market FRED prints
+    # drop rows where either spread jumped more than 50bp in a day — implausible moves
+    # from holiday/thin-market FRED prints, not real repricing
     clean_mask = (daily_yields["spread_1yr_bp"].diff().abs() < 50) & \
                  (daily_yields["spread_3mo_bp"].diff().abs() < 50)
-    # pandas DataFrame boolean indexing: drop rows where either spread moved more than 50bp in one day
     daily_spreads      = daily_yields[clean_mask]
-    # pandas Series.reindex: re-align target rate to the cleaned index after rows are dropped
     fed_target = fed_target.reindex(daily_yields.index, method="ffill")
 
     return daily_spreads, fed_target
 
-# Returns days with last cuts of a cycle
 def _last_cut_dates(fed_target: pd.Series, hold_months: int = HOLD_MONTHS) -> list[pd.Timestamp]:
     """
     Return confirmed 'easing cycle done' dates: last cut before a hold of
     >= hold_months with no intervening hike.
     """
-    # pandas Series.diff: day-over-day change in the target rate; negative = cut, positive = hike
     # fed_target is decimal (0.045 = 4.5%), so a 25bp FOMC step shows up as a 0.0025 change
     change  = fed_target.diff()
-    # pandas Series boolean comparison: True on days where the rate fell by more than 1bp (a genuine cut)
     is_cut  = change < -FED_TARGET_MOVE_FLOOR
-    # pandas DatetimeIndex.tolist: convert index to a plain Python list for O(1) integer positional access
     dates   = fed_target.index.tolist()
     confirmed = []
     i = 0
 
     while i < len(dates):
-        # pandas Series.iloc: positional access by integer to check whether day i is a cut
-        # if the day is not a cut just move on since it can't be a last cut
         if not is_cut.iloc[i]:
             i += 1
             continue
 
-        # At this stage the date associated with the index i must be a cut
         last_cut_idx = i
-        # Consider the next day
+        # walk forward over the run of cuts, tracking the last one, until a hike appears
         j = i + 1
-        # pandas Series.iloc: check whether day j is a hike (change > 1bp) to stop the walk
-        # Loop until we run out of time or day j is a hike
         while j < len(dates) and not change.iloc[j] > FED_TARGET_MOVE_FLOOR:
-            # pandas Series.iloc: check whether day j itself is a cut to update the last-cut pointer
             if is_cut.iloc[j]:
                 last_cut_idx = j
             j += 1
 
+        # confirm the last cut only if it's followed by a hold of >= hold_months
+        # with no hike; a hike before the hold elapses disqualifies it
         hold_days_required = hold_months * 21
         hold_count    = 0
-        # Working with k handles the case where tiem runs out, and returns last cut date as valid if so
         k = last_cut_idx + 1
         while k < len(dates):
-            # Will only run if period of hold isn't long enough, and breaks when hike appears before 6 months
             if change.iloc[k] > FED_TARGET_MOVE_FLOOR:
                 break
             hold_count += 1
-            # Tests if hold period is actually >= 6 months. Will add to list if it is
             if hold_count >= hold_days_required:
                 confirmed.append(dates[last_cut_idx])
                 break
             k += 1
 
-        # At this stage we would've confirmed a last cut date, restart algorithm to find a new one
         i = j
 
     return confirmed
@@ -407,7 +365,7 @@ def _append_cycle(cycles: list, hike_dates, span_start, span_end, min_hikes) -> 
 
 
 def _neutral_veto(nominal_neutral, dff: pd.Series, date) -> bool:
-    """Gate C: True == VETO the ratio exit (fed funds still too far below neutral to be done).
+    """Distance-to-neutral veto: True == VETO the ratio exit (fed funds still too far below neutral to be done).
 
     Vetoes when  nominal_neutral(date) - dff(date) > NEUTRAL_VETO_BP  (both percent; *100 = bp).
     Returns False (no veto) when the guard is off or neutral is unavailable that day (pre-2005
@@ -425,14 +383,13 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
                   neutral_guard: bool = True) -> pd.Series:
     """Returns a daily boolean Series — True when the payer signal is active.
 
-    neutral_guard: when True, apply Gate C — the distance-to-neutral veto on the ratio exit
+    neutral_guard: when True, apply the distance-to-neutral veto on the ratio exit
     (block the ratio exit while fed funds is > NEUTRAL_VETO_BP below real-time nominal neutral).
     Inactive on any day without an r* reading (pre-2005), so pre-2005 cycles are unchanged.
     Set False to reproduce the pre-guard behaviour."""
-    #Extract cleaned versions of daily spreads of DGS1 and DGS3MO vs DFF and daily Fed targets. df and Series
     daily_spreads_rates, fed_target = _load_signal_data(fred_api_key, start=start)
 
-    # nominal-neutral series for Gate C (real-time LW r* + expected inflation), forward-filled
+    # nominal-neutral series for the distance-to-neutral veto (real-time LW r* + expected inflation), forward-filled
     # onto the signal index. NaN before 2005q1 r* coverage -> guard inactive those days. Loaded
     # once here; a network/parse failure degrades gracefully to "guard off" rather than crashing.
     nominal_neutral = None
@@ -443,7 +400,6 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
         except Exception as e:
             print(f"  [neutral guard] disabled — could not load real-time neutral rate: {e}")
             nominal_neutral = None
-    # Extract dates with last cuts (list of timestamps)
     last_cuts         = _last_cut_dates(fed_target)
 
     # in_cycle is True on date D if and only if:
@@ -466,9 +422,7 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
                 break
             in_cycle[date] = True
 
-    # pandas Series column access: extract the pre-computed 3-month spread as a Series
     spread_3mo = daily_spreads_rates["spread_3mo_bp"]
-    # pandas Series column access: extract the pre-computed 1-year spread as a Series
     spread_1yr = daily_spreads_rates["spread_1yr_bp"]
     # entry spreads smoothed over a short window so a single noisy dff print (holiday/thin
     # trading) can't flip the latch on by itself — see ENTRY_SMOOTH_WINDOW_DAYS comment above
@@ -503,7 +457,7 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
     # (matching spread_1yr_bp/spread_3mo_bp and the bp-denominated thresholds below).
     cum_hikes_bp = (target_change.clip(lower=0) * 10000).cumsum()
 
-    # ROC gate (Gate B): 21-day median of the month-over-month spread change. The
+    # ROC gate: 21-day median of the month-over-month spread change. The
     # ratio exit is only allowed to fire when this is below ROC_GATE_BP (spread
     # genuinely rolling over). Median over ~1 month makes it shock-robust.
     roc_gate_series = spread_1yr.diff(ROC_GATE_DIFF_LAG) \
@@ -553,10 +507,10 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
                 latched = False
             # maturity-ratio exit: hiking-still-priced has shrunk to a small fraction
             # of hiking-already-done. Gated on FLOOR_BP so the denominator isn't ~0,
-            # and on the ROC gate (Gate B) so the spread must be genuinely rolling
-            # over — the ratio's level alone can't fire the exit. Gate C (neutral guard,
-            # below) additionally VETOES this exit while fed funds is still well below
-            # neutral (a normalization cycle that isn't done climbing) — see _ratio_exit_vetoed.
+            # and on the ROC gate so the spread must be genuinely rolling over — the
+            # ratio's level alone can't fire the exit. The distance-to-neutral veto
+            # additionally BLOCKS this exit while fed funds is still well below neutral
+            # (a normalization cycle that isn't done climbing) — see _neutral_veto.
             elif cum_since_entry >= RATIO_EXIT_FLOOR_BP and \
                     roc_gate_series[date] < ROC_GATE_BP and \
                     spread_1yr_exit[date] / cum_since_entry < RATIO_EXIT_THRESHOLD and \
@@ -566,11 +520,9 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
                 latched = False
         signal[date] = latched
 
-    # pandas Series.name: assign a name so callers can identify the column in downstream DataFrames
     signal.name         = "first_hike_signal"
     return signal
 
-# Dictionary of estimated hiking episodes and their dates
 def signal_to_cycles(signal: pd.Series) -> list[dict]:
     """
     Convert a boolean signal series into cycle dicts for backtest.calc_strat_ret.
@@ -584,12 +536,9 @@ def signal_to_cycles(signal: pd.Series) -> list[dict]:
     """
     cycles     = []
     in_episode = False
-    # pandas Timestamp type annotation: episode_start will hold a Timestamp or None before the first episode
     episode_start: pd.Timestamp | None = None
     episode_num = 0
 
-    # pandas Series.items: iterate over (DatetimeIndex label, boolean value) pairs, which .items() breaks down into
-    # in date order
     for date, val in signal.items():
         if val and not in_episode:
             episode_start = date
@@ -598,62 +547,39 @@ def signal_to_cycles(signal: pd.Series) -> list[dict]:
             episode_num += 1
             cycles.append({
                 "label":      f"episode_{episode_num}  {episode_start.year}–{date.year}",
-                # pandas Timestamp: store the episode start/end as Timestamps for downstream date arithmetic
                 "first_hike": episode_start,
                 "last_hike":  date,
             })
             in_episode = False
 
+    # episode still active at the end of the data: close it at the last available date
     if in_episode and episode_start is not None:
         episode_num += 1
         cycles.append({
             "label":      f"episode_{episode_num}  {episode_start.year}–ongoing",
             "first_hike": episode_start,
-            # pandas DatetimeIndex integer indexing: use the last date in the signal as the open episode's exit
             "last_hike":  signal.index[-1],
         })
 
     return cycles
 
-# Takes arguments df from calc_strat_ret, daily return series, and cycles list from earlier
-# Computes dataframe of stats per cycle
-'''
-# df: DataFrame returned by calc_strat_ret / _run. Has columns:
-#       "signal"     — int position per day: -1 (short/payer), 0 (flat), +1 (long)
-#       "bond_ret"   — raw daily bond return
-#       "strat_ret"  — signal * bond_ret (negative of bond_ret when short)
-#       "cum_equity" — running product of (1 + strat_ret), starting at 1.0
-#     Index: DatetimeIndex of all trading days in the backtest.
-#
-# ret: daily returns Series output by fetch_carryless_dgs2_returns or compute_returns.
-#      Named "ret", indexed by DatetimeIndex. NOTE: not actually used inside this
-#      function — strat_ret is pulled from df instead. Kept for API symmetry with _run.
-#
-# cycles: list of dicts produced by signal_to_cycles. Each dict has the shape:
-#       {
-#           "label":      str          e.g. "episode_1  1994–1995"
-#           "first_hike": pd.Timestamp — signal-on date (episode entry)
-#           "last_hike":  pd.Timestamp — signal-off date (episode exit)
-#       }
-'''
 def stats_per_cycle(df: pd.DataFrame, ret: pd.Series, cycles: list[dict]) -> pd.DataFrame:
-    """Per-cycle breakdown: entry/exit dates, days held, total compounded return."""
+    """Per-cycle breakdown: entry/exit dates, days held, total compounded return.
+
+    ret is unused here (strat_ret is pulled from df); it's kept only for API symmetry
+    with _run so callers can pass the same arguments to both.
+    """
     rows = []
-    # For each day in episode
     for c in cycles:
-        # pandas boolean indexing: filter to rows inside this cycle's window where position is short (-1)
+        # restrict to days inside this cycle's window where the position was short (-1)
         mask = (df.index >= c["first_hike"]) & (df.index <= c["last_hike"]) & (df["signal"] == -1)
-        # pandas DataFrame.loc: select strat_ret for matching rows, drop any NaN values
         r    = df.loc[mask, "strat_ret"].dropna()
-        # pandas Series.prod: computes (1+r1)*(1+r2)*...*(1+rN) then subtracts 1 for total compounded return
         cum  = (1 + r).prod() - 1
         rows.append({
             "cycle":       c["label"],
-            # pandas Timestamp.date: strip time component for clean string display
             "entry":       str(c["first_hike"].date()),
             "exit":        str(c["last_hike"].date()),
             "days_held":   len(r),
             "total_ret_%": round(cum * 100, 2),
         })
-    # pandas DataFrame: construct from list of dicts, then set "cycle" as the row index
     return pd.DataFrame(rows).set_index("cycle")

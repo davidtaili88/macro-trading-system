@@ -5,12 +5,7 @@ The ratio exit fires when  smoothed_spread_1yr / cum_bp_hiked_since_cycle_start 
 below RATIO_EXIT_THRESHOLD: "hiking still priced" has shrunk to a small fraction of
 "hiking already delivered", so the cycle is mostly behind us and we leave.
 
-0.10 is a DISCRETIONARY round value. This test asks the same question we asked of
-ROC_GATE_BP: is 0.10 sitting on a FLAT PLATEAU (the exact number is a don't-care ->
-"round value in a wide band" is itself the justification) or on a CLIFF (pooled P&L
-lurches as you nudge the threshold one step -> the value is load-bearing)?
-
-RESULT (this run): PLATEAU at 0.10 — the local step in/out of 0.10 is an ordinary-sized
+RESULT: PLATEAU at 0.10 — the local step in/out of 0.10 is an ordinary-sized
 wiggle in pooled P&L, not an outlier. The raw sweep table shows WHY it's still not a
 totally free choice: there is a flat CORRIDOR ~[0.06, 0.13] holding 8 clean cycles, but
 BELOW ~0.06 the exit fires too weakly and the 2017-18 leg is lost (7 cycles), and ABOVE

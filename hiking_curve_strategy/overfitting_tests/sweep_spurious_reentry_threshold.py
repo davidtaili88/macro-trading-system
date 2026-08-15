@@ -16,17 +16,14 @@ quantitative backing, because it sits on a hindsight-free separation structure:
 "cum bp hiked since cycle start" is a running quantity the strategy already knows in real
 time — no oracle, no last-hike distance — so this is a real gap, not laundered hindsight.
 
-WHAT THIS TEST CHECKS (and its ceiling)
----------------------------------------
-The comment ASSERTS "any value in the ~200bp gap behaves identically on our data". This
-test VERIFIES that: sweep REENTRY_BLOCK_BP across 150..500bp and check that pooled P&L and
-cycle count are FLAT across the (225, 425) gap and only change at the edges (below ~225 you
-start blocking legitimate second legs; above ~425 you stop blocking the 2023 whipsaw).
-
-Ceiling: this rests on n=3 re-entry events (really n=1 on the spurious side), so we do NOT
-compute a sigma/MAD noise floor — n=1 can't support one and that would be fake precision.
-The honest output is tier-2 "gap-verified discretionary": a round value in a gap the sweep
-CONFIRMS is flat, not a derived number. Firm-up = more cycles, not a cleverer statistic.
+RESULT: PLATEAU at 350bp — a byte-identical plateau across ~150..450bp (same 8 clean
+cycles, pooled P&L pinned at 14.07%), with the gate's only effect being to block the
+spurious 2023 SVB re-entry. BELOW ~225bp the gate starts blocking the legitimate 2004-06 /
+2015-18 second legs; ABOVE ~475bp the SVB whipsaw returns as a 9th cycle (-1.78%, pooled
+drops to 12.04%). So the CORRIDOR EDGES are load-bearing; 350 is a round value sitting ~100bp
+below the sole live edge. This rests on only 3 re-entry events (1 spurious), so 350bp is a
+disclosed round choice inside a confirmed-flat gap, not a precisely-derived number — the
+firm-up is more cycles. See the REENTRY_BLOCK_BP comment in signal_logic.py.
 
 HOW IT WORKS
 ------------

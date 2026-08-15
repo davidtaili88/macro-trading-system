@@ -1,20 +1,24 @@
 """
 Data fetching and processing for the hiking cycle 2-year payer strategy.
 
-Two return series are available for backtesting:
-
-  ZT=F  — CME 2yr Treasury futures front month (Yahoo Finance).
-           Purer duration expression: carry is netted into the roll basis rather
-           than bleeding directly into P&L. Best tradable instrument.
+The strategy is built and tested on DGS2:
 
   DGS2  — FRED constant-maturity 2yr yield (via fredapi), reconstructed into
            a return series using the duration approximation:
-               r_t = -D * Δy_t       (price-only, no carry)
-           where D = 1.921 (fixed modified duration for a 2yr note).
-           Carry is intentionally excluded to isolate the pure yield-move signal.
-           Convexity (½ * C * Δy²) is negligible at the 2yr point (C ≈ 5) and
-           omitted. This series goes back to 1976 — covering all historical
-           hiking cycles — which ZT cannot reach.
+               r_t = -D(y_t) * Δy_t  (price-only, no carry)
+           where D is the modified duration of a 2yr par bond, recomputed daily
+           from the yield level (it breathes with rates; ≈ 1.9 near 5%) rather
+           than held fixed — see fetch_carryless_dgs2_returns.
+           Because DGS2 is a constant-maturity point (re-struck daily from the
+           fitted curve), every day is a fresh exactly-2yr reading — the maturity
+           never decays, so there is no roll or ageing to model. Carry is
+           intentionally excluded to isolate the pure yield-move signal; convexity
+           (½ * C * Δy²) is negligible at the 2yr point (C ≈ 5) and omitted. The
+           series reaches back to 1976, covering every historical hiking cycle.
+
+A separate, side tradability experiment prices the same signal on a real,
+rollable futures contract to check the edge survives carry and roll frictions —
+see the helpers below and strategies/signal_trade_zt.py.
 
 Hiking cycle dates are NOT stored here. They are supplied by the signal engine.
 """
@@ -24,36 +28,27 @@ import pandas as pd
 from fredapi import Fred
 
 
-TICKER_ZT  = "ZT=F"  # CME 2yr Treasury futures front month — purer duration bet, carry netted in basis
+TICKER_ZT  = "ZT=F"
 
-START = "2002-01-01"   # ZT=F available from ~2002
+START = "2002-01-01"
 END   = None           # through today
 
-# str | None is union syntax: end accepts either type string or a None
 def _download(ticker: str, start: str, end: str | None) -> pd.DataFrame:
-    #yf.download returns data for an instrument's Open, High, Low, Close, Volume, indexed by date. 
-    #We care about the close value here so we only return the close column as a series
-    #Indexed by date since this is daily data. 
-    #Auto-adjust accounts for splits (when share amounts double but prices half)
-    #Auto-adjust accounts for dividends (asset price would drop as investor receives cash, we ignore this)
+    """Fetch daily auto-adjusted close prices for a ticker as a single-column
+    'price' DataFrame indexed by date."""
     raw = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)["Close"]
-    #If raw is an instance of a dataframe object
     if isinstance(raw, pd.DataFrame):
-        #.squeeze() converts to a series
         raw = raw.squeeze()
-    #Makes the column name "price"
     raw.name = "price"
-    #Converts to dataframe since we obtain a series previously. 
     return raw.dropna().to_frame()
 
 
 def fetch_zt(start: str = START, end: str | None = END) -> pd.DataFrame:
     """
-    Return back-adjusted close prices for ZT (2yr Treasury futures) at daily frequency.
-
-    auto_adjust=True removes roll gaps so pct_change() gives clean returns without
-    quarterly expiry jumps. Futures carry is netted into the basis rather than bleeding
-    directly into P&L, making ZT a pure duration expression for a payer trade.
+    Side tradability experiment: back-adjusted daily close prices for a real,
+    rollable 2yr Treasury futures contract, used to sanity-check whether the
+    DGS2 signal survives real trading frictions. auto_adjust=True removes roll
+    gaps so pct_change() gives clean returns without quarterly expiry jumps.
     """
     return _download(TICKER_ZT, start, end)
 
@@ -119,7 +114,7 @@ def fetch_dgs2_full_pnl(
         price_ret   = -D_mod * Δy
                       pure yield-move P&L; negative when yields rise (price falls)
 
-        carry_fund  = +(2y - fed_funds) / 250
+        carry_fund  = +(2y - fed_funds) / 252
                       net coupon: coupon received to bond holder minus interest
                       lost on cash collateral at fed funds rate. (2y - fed_funds) is
                       already an annualised rate of return (% of notional per
@@ -128,8 +123,8 @@ def fetch_dgs2_full_pnl(
                       unlike price_ret/carry_roll which convert a yield-level
                       change into a price change and so do need D.
 
-        carry_roll  = + D_mod * (2y - 1y) / 250
-                      roll-down: bond ages 1/250yr per day, sliding down the
+        carry_roll  = + D_mod * (2y - 1y) / 252
+                      roll-down: bond ages 1/252yr per day, sliding down the
                       upsloping curve so its yield drops and price rises.
                        duration-adjusted to match return space
 
@@ -191,15 +186,15 @@ def compute_returns(prices: pd.DataFrame) -> pd.Series:
 
 def get_zt_roll_dates(start: str, end: str, bdays_before_fnd: int = 5) -> pd.DatetimeIndex:
     """
-    CME ZT roll dates anchored to First Notice Day (FND).
+    Roll-date schedule for the side futures tradability experiment, anchored to
+    First Notice Day (FND).
 
-    ZT FND = last business day of the month prior to the delivery month
-    (delivery months: Mar/Jun/Sep/Dec → FND falls in Feb/May/Aug/Nov).
+    FND = last business day of the month prior to the delivery month (delivery
+    months Mar/Jun/Sep/Dec → FND falls in Feb/May/Aug/Nov).
 
     We roll `bdays_before_fnd` business days before FND, landing inside the
     peak calendar-spread liquidity window and safely before delivery risk.
     Default of 5 business days puts the roll in the final week of the prior month.
-
     """
     def _last_bday(year: int, month: int) -> pd.Timestamp:
         if month == 12:

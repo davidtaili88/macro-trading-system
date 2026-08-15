@@ -11,8 +11,9 @@ DGS2 advantages:
   - Full price/carry/roll decomposition available (fetch_dgs2_full_pnl)
 
 DGS2 limitations:
-  - Cash-market carry bleeds against the short position every day, unlike
-    ZT futures where carry is netted into the roll basis (see signal_trade_zt.py)
+  - As a constant-maturity cash series, carry bleeds against the short position
+    every day; the price-only reconstruction isolates the yield-move signal but
+    a fully tradable P&L must account for that carry separately
 
 Data sources:
   DGS2, DGS1, DFF — FRED (via data.fetch_dgs2_full_pnl)
@@ -31,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import _paths  # noqa: F401 — registers core/, benchmark/, utils/ on sys.path
 from data      import fetch_dgs2_full_pnl, fetch_carryless_dgs2_returns
 from backtest  import annualised_stats, rolling_sharpe, event_time_returns, calc_strat_ret, cycle_pnl
-from utils.backtest_utils import cycle_matched_sharpe
+from utils.performance_evaluation import cycle_matched_sharpe
 from plot      import equity_curve, event_time_plot, rolling_sharpe_plot, cycle_breakdown, carry_decomposition_plot, pnl_components_timeseries
 from benchmark import POST2003_FED_HIKE_CYCLES
 from signal_logic import detect_signal, signal_to_cycles

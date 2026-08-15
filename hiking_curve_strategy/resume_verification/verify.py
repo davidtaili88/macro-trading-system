@@ -2,9 +2,10 @@
 Resume-verification harness — hiking_curve_strategy (DGS2 only).
 
 Runs one check per resume claim against the LIVE code + real FRED data and prints
-a PASS/FAIL summary. Every figure is DGS2-only (ZT ignored, per resume scope).
-Each check verifies dthe claim as it is HONESTLY worded:
+a PASS/FAIL summary. Every figure is computed on DGS2. Each check verifies the
+claim as it is HONESTLY worded:
 
+  - spans five hiking cycles since 1990 (min_hikes=2; the lone 1997 hike excluded)
   - captured ~56% pre-carry of the perfect-hindsight benchmark (pooled, whole-strategy)
   - multi-gate rule cutting late exits by up to ~2 months vs a naive trigger
 
@@ -12,6 +13,9 @@ The capture check is the POOLED whole-strategy pre-carry capture: pooled P&L of 
 detected episodes (including out-of-cycle false positives — real strategy behaviour,
 so counted) over the oracle's pooled P&L across all hiking cycles (-60/-30td offsets),
 on DGS2 price-only returns. See check_capture_ratio for the exact definition.
+
+The re-entry-block and not-overfit resume claims are verified separately: the
+re-entry gate and the parameter-perturbation sweeps live under overfitting_tests/.
 
 Run:  cd hiking_curve_strategy && PYTHONPATH=. python3 resume_verification/verify.py
 """
@@ -78,6 +82,25 @@ def compounded_pnl(ret, cycles, entry_days=None, exit_days=None) -> float:
 def _result(name, claim, passed, detail):
     return {"name": name, "claim": claim, "passed": passed, "detail": detail}
 
+
+
+# ── number of hiking cycles the strategy spans ────────────────────
+def check_cycle_count():
+    """Resume claims the strategy covers FIVE hiking cycles since 1990. This asserts
+    the production benchmark actually derives five (min_hikes=2 excludes the lone
+    Mar-1997 single-hike event — an isolated insurance hike is not a sustained
+    tightening campaign the payer thesis can trade)."""
+    from benchmark import FED_HIKE_CYCLES
+    expected = 5
+    n = len(FED_HIKE_CYCLES)
+    labels = ", ".join(c["label"] for c in FED_HIKE_CYCLES)
+    return _result(
+        "hiking-cycle count",
+        f"strategy spans {expected} hiking cycles since 1990",
+        n == expected,
+        f"derived {n} cycles (min_hikes=2, >=1990): {labels}"
+        f"{'' if n == expected else f'  [EXPECTED {expected}]'}",
+    )
 
 
 # ── capture of the perfect-hindsight benchmark ────────────────────
@@ -182,6 +205,7 @@ def check_late_exit_reduction():
 
 
 CHECKS = [
+    check_cycle_count,
     check_capture_ratio,
     check_late_exit_reduction,
 ]

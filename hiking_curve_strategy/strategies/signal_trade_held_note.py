@@ -1,21 +1,20 @@
 """
-Signal-driven backtest for the hiking-cycle payer — INSTRUMENT A: a HELD, AGING 2Y note.
+Signal-driven backtest for the hiking-cycle payer on a HELD, AGING 2Y note.
 
-CONTRAST WITH signal_trade_dgs.py (instrument B, constant-maturity):
-  B re-strikes the 2Y point EVERY DAY: duration pinned at ~2Y, coupon = today's 2y,
-  carry = (2y_today - ff)/252. No aging, no locked coupon.
+CONTRAST WITH signal_trade_dgs.py (the constant-maturity version):
+  The constant-maturity version re-strikes the 2Y point EVERY DAY: duration pinned at
+  ~2Y, coupon = today's 2y, carry = (2y_today - ff)/252. No aging, no locked coupon.
 
-  A (this file) SHORTS ONE SPECIFIC NOTE at each signal entry and HOLDS it, letting it
-  AGE down the curve until the signal exits. This is the construction David's carry
-  intuition points at: the coupon is LOCKED at entry, so as the Fed hikes and funding
-  climbs past that locked coupon, the SHORT earns positive carry (funding_earned -
-  coupon_paid grows). The cost is that the note DRIFTS off the 2Y point the signal
-  targets: 6 months in it is a 1.5Y note (1.5Y duration/yield), so the price/duration
-  edge is earned on a shrinking, drifting exposure. This file measures whether A's
-  better carry outweighs that drift + the roll drag a short accumulates sliding DOWN an
-  upward curve.
+  The held note (this file) SHORTS ONE SPECIFIC NOTE at each signal entry and HOLDS it,
+  letting it AGE down the curve until the signal exits. The coupon is LOCKED at entry, so
+  as the Fed hikes and funding climbs past that locked coupon, the SHORT earns positive
+  carry (funding_earned - coupon_paid grows). The cost is that the note DRIFTS off the 2Y
+  point the signal targets: 6 months in it is a 1.5Y note (1.5Y duration/yield), so the
+  price/duration edge is earned on a shrinking, drifting exposure. This file measures
+  whether the held note's better carry outweighs that drift + the roll drag a short
+  accumulates sliding DOWN an upward curve.
 
-SAME as B (deliberately, so the comparison is clean):
+SAME as the constant-maturity version (deliberately, so the comparison is clean):
   - Signal: detect_signal / signal_to_cycles (identical entry/exit DATES).
   - P&L decomposition: price + carry_fund + carry_roll, same three buckets, decimal
     return space, short = negate. The MECHANICS of each bucket differ (aging note vs
@@ -30,7 +29,7 @@ HELD-NOTE P&L MECHANICS (per episode, short position):
     - D_m    = modified duration at remaining maturity m (shrinks toward 0 as m->0).
     - price_ret (long) = -D_m * d(y_m)         : MTM of the note's own yield move
     - carry_fund(long) = (y0 - ff_t)/252       : LOCKED coupon y0 received, funding paid.
-                         KEY DIFFERENCE vs B: y0 is frozen at entry, NOT re-struck.
+                         KEY DIFFERENCE vs constant maturity: y0 is frozen at entry, NOT re-struck.
     - carry_roll(long) = -D_m * (y_m - y_m_prevday_at_older_age)... implemented as the
                          pull-to-curve as m shrinks: +D_m * (dy/dm) * (dm) where the note
                          rolls DOWN the curve. We compute it directly from the change in
@@ -61,7 +60,7 @@ from benchmark     import POST2003_FED_HIKE_CYCLES
 from signal_logic  import detect_signal, signal_to_cycles
 from utils.fred_utils import fetch_fred_dataframe
 
-DATA_START = "1982-10-01"   # signal-input floor (DFEDTAR 1982-09-27); same as B
+DATA_START = "1982-10-01"   # signal-input floor (DFEDTAR 1982-09-27); same as the constant-maturity version
 TRADE_DAYS = 252
 
 # curve tenors (years) we interpolate the aging note's yield across, and their FRED ids.
@@ -91,19 +90,20 @@ def _interp_yield(curve_row: pd.Series, m: float) -> float:
 
 
 def held_note_pnl(api_key: str, cycles: list[dict], roll_months: int | None = None) -> pd.DataFrame:
-    """Per-episode held-note (instrument A) P&L, returned as ONE daily decimal-return
+    """Per-episode held-note P&L, returned as ONE daily decimal-return
     series aligned to the signal calendar (0 on non-position days), plus its three
-    components, so it plugs into the same reporting as B.
+    components, so it plugs into the same reporting as the constant-maturity version.
 
     roll_months: re-strike the note back to a fresh 2Y every this-many months. None =
-    never roll (A-pure: one note aged over the whole episode → decays to a bill). A finite
+    never roll (one note aged over the whole episode → decays to a bill). A finite
     value keeps the note's remaining maturity in [2 - roll_months/12, 2], so duration
     stays near the 2Y point the signal targets while STILL locking the coupon WITHIN each
     roll window (so the carry-handoff can still operate, just reset periodically).
 
     For each episode we walk the note day by day, re-anchoring (relocking coupon, resetting
-    age to 2Y) at each roll. Because A's return depends on the current anchor (locked coupon
-    + age since last roll), it MUST be built per-episode, not as a global series like B."""
+    age to 2Y) at each roll. Because the held note's return depends on the current anchor
+    (locked coupon + age since last roll), it MUST be built per-episode, not as a global
+    series like the constant-maturity version."""
     curve = _load_curve(api_key)
     idx = curve.index
 
@@ -180,7 +180,7 @@ def _summary(name: str, df: pd.DataFrame, cycles: list[dict]) -> None:
     all_mask = df["signal"] == -1
     pooled = (1 + df.loc[all_mask, "strat_ret"].dropna()).prod() - 1
     print(f"  {'pooled (all cycles)':<40}  {pooled * 100:+.2f}%")
-    # component attribution (pooled), so we can SEE where A differs from B
+    # component attribution (pooled), so we can SEE where the held note differs from constant maturity
     for comp in ["price_ret", "carry_fund", "carry_roll"]:
         s = df.loc[all_mask, comp].dropna()
         print(f"    └ {comp:<12} pooled contribution  {((1 + s).prod() - 1) * 100:+.2f}%")
@@ -196,45 +196,45 @@ def main():
     cycles = signal_to_cycles(signal)
     print(f"  {len(cycles)} episode(s)")
 
-    # ---- A: held aging note ----
-    print("\nBuilding HELD-NOTE (instrument A) P&L (aging note, locked coupon)...")
-    df_A = held_note_pnl(api_key, cycles)
-    _summary("A — HELD AGING NOTE (locked coupon, drifts off 2Y)", df_A, cycles)
+    # ---- held aging note ----
+    print("\nBuilding HELD-NOTE P&L (aging note, locked coupon)...")
+    df_held = held_note_pnl(api_key, cycles)
+    _summary("HELD AGING NOTE (locked coupon, drifts off 2Y)", df_held, cycles)
 
-    # ---- B: constant maturity, for side-by-side ----
-    print("\nBuilding CONSTANT-MATURITY (instrument B) P&L for comparison...")
+    # ---- constant maturity, for side-by-side ----
+    print("\nBuilding CONSTANT-MATURITY P&L for comparison...")
     pnl_full = fetch_dgs2_full_pnl(api_key, start=DATA_START)
-    ret_B = pnl_full["total_ret"].rename("ret")
-    df_B = calc_strat_ret(ret_B, cycles)
-    per_B, pooled_B = cycle_pnl(ret_B, cycles)
-    print(f"\n{'='*55}\n  B — CONSTANT MATURITY (re-struck daily) [reference]\n{'='*55}")
+    ret_cm = pnl_full["total_ret"].rename("ret")
+    df_cm = calc_strat_ret(ret_cm, cycles)
+    per_cm, pooled_cm = cycle_pnl(ret_cm, cycles)
+    print(f"\n{'='*55}\n  CONSTANT MATURITY (re-struck daily) [reference]\n{'='*55}")
     print("Per-cycle compounded payer P&L:")
     for c in cycles:
-        print(f"  {c['label']:<40}  {per_B.get(c['label'], float('nan'))*100:+.2f}%")
-    print(f"  {'pooled (all cycles)':<40}  {pooled_B*100:+.2f}%")
+        print(f"  {c['label']:<40}  {per_cm.get(c['label'], float('nan'))*100:+.2f}%")
+    print(f"  {'pooled (all cycles)':<40}  {pooled_cm*100:+.2f}%")
 
-    print("\nGenerating A-vs-B equity comparison...")
-    _plot_A_vs_B(df_A, df_B, cycles)
+    print("\nGenerating held-note vs constant-maturity equity comparison...")
+    _plot_comparison(df_held, df_cm, cycles)
     try:
         plt.show()
     except KeyboardInterrupt:
         pass
 
 
-def _plot_A_vs_B(df_A: pd.DataFrame, df_B: pd.DataFrame, cycles: list[dict]) -> None:
-    """Equity curves of A (held note) vs B (constant maturity) on the SAME axes, so the
-    instrument difference is visible. Both are payer strategies on the identical signal;
-    the only difference is the P&L construction."""
+def _plot_comparison(df_held: pd.DataFrame, df_cm: pd.DataFrame, cycles: list[dict]) -> None:
+    """Equity curves of the held note vs the constant-maturity version on the SAME axes,
+    so the instrument difference is visible. Both are payer strategies on the identical
+    signal; the only difference is the P&L construction."""
     # rebuild each cumulative equity restricted to active days (flat off-signal)
-    eqA = (1 + df_A["strat_ret"].fillna(0)).cumprod()
-    eqB = (1 + df_B["strat_ret"].fillna(0)).cumprod()
+    eq_held = (1 + df_held["strat_ret"].fillna(0)).cumprod()
+    eq_cm   = (1 + df_cm["strat_ret"].fillna(0)).cumprod()
     fig, ax = plt.subplots(figsize=(13, 6))
-    ax.plot(eqA.index, eqA, color="#c0392b", lw=1.6, label="A — held aging note (locked coupon)")
-    ax.plot(eqB.index, eqB, color="#3b6ea5", lw=1.6, label="B — constant maturity (re-struck daily)")
+    ax.plot(eq_held.index, eq_held, color="#c0392b", lw=1.6, label="held aging note (locked coupon)")
+    ax.plot(eq_cm.index, eq_cm, color="#3b6ea5", lw=1.6, label="constant maturity (re-struck daily)")
     for c in cycles:
         ax.axvspan(c["first_hike"], c["last_hike"], color="0.5", alpha=0.10)
     ax.set_ylabel("Growth of $1 (rebased at plot start)")
-    ax.set_title("Payer strategy — Instrument A (held note) vs B (constant maturity)\n"
+    ax.set_title("Payer strategy — held note vs constant maturity\n"
                  "same signal; difference is purely the P&L construction")
     ax.legend(loc="upper left")
     ax.grid(True, alpha=0.25)

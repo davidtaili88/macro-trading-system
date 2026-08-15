@@ -9,15 +9,10 @@ Four plots:
   4. cycle_breakdown   — per-cycle bar chart of annualised return and Sharpe
 """
 
-# matplotlib.pyplot: main plotting interface; plt is the standard alias
 import matplotlib.pyplot as plt
-# matplotlib.dates: formatters/locators for converting datetime64 values to readable axis tick labels
 import matplotlib.dates as mdates
-# matplotlib.patches: geometric shapes (Rectangle, Patch, etc.) used for custom legend entries or overlays
 import matplotlib.patches as mpatches
-# numpy: vectorised array math; np is the standard alias
 import numpy as np
-# pandas: labelled time-series and DataFrame operations; pd is the standard alias
 import pandas as pd
 
 TRADING_DAYS = 252
@@ -163,53 +158,35 @@ def event_time_plot(
     event_df: output of backtest.event_time_returns()
     Each column = one cycle. Plots median + 10th/90th pct band.
     """
-    # pandas DataFrame attribute: True if the DataFrame has no rows
     if event_df.empty:
         print("No event-time data to plot.")
         return
 
-    # matplotlib.pyplot: create Figure and Axes with given dimensions
     fig, ax = plt.subplots(figsize=(12, 5))
 
     # plot individual cycles lightly
     for col in event_df.columns:
-        # matplotlib Axes: plot each cycle column as a faint line; alpha=0.4 makes it semi-transparent
         ax.plot(event_df.index, event_df[col], lw=0.8, alpha=0.4)
 
-    # median and percentile band
-    # pandas DataFrame.median: compute row-wise median across all cycle columns (axis=1 = across columns)
+    # median and 10th-90th percentile band across cycles
     median = event_df.median(axis=1)
-    # pandas DataFrame.quantile: compute the 10th percentile across columns for each row
     p10    = event_df.quantile(0.10, axis=1)
-    # pandas DataFrame.quantile: compute the 90th percentile across columns for each row
     p90    = event_df.quantile(0.90, axis=1)
 
-    # matplotlib Axes: draw the median line in bold black
     ax.plot(event_df.index, median, color="black", lw=2.0, label="Median")
-    # matplotlib Axes: shade the region between p10 and p90 for the uncertainty band
     ax.fill_between(event_df.index, p10, p90, alpha=0.15, color="black", label="10th-90th pct")
 
-    # matplotlib Axes: draw a vertical dashed red line at x=0 marking the event anchor date
     ax.axvline(0, color="red", lw=1.2, ls="--", label=f"t=0: {anchor_label}")
-    # matplotlib Axes: draw a horizontal dotted grey line at y=1.0 (the normalised baseline)
     ax.axhline(1.0, color="grey", lw=0.8, ls=":")
 
-    # matplotlib Axes: set title using an f-string built from the anchor_label argument
     ax.set_title(f"2yr Bond: Normalised Cumulative Return Around {anchor_label.title()}", fontsize=13)
-    # matplotlib Axes: label the x-axis
     ax.set_xlabel("Trading days relative to anchor")
-    # matplotlib Axes: label the y-axis
     ax.set_ylabel("Cumulative return (anchor = 1.0)")
-    # matplotlib Axes: render the legend
     ax.legend(fontsize=9)
-    # matplotlib Axes: show a light grid
     ax.grid(alpha=0.3)
-    # matplotlib Figure: tighten layout
     fig.tight_layout()
     if save_path:
-        # matplotlib Figure: save figure to file
         fig.savefig(save_path, dpi=150)
-    # matplotlib.pyplot: display the figure
     plt.show(block=False)
 
 
@@ -284,7 +261,7 @@ def cycle_breakdown(
     with a side-by-side buy-hold bar for the same window so you can see how
     much value the payer adds vs just holding long bonds in those same periods.
 
-    If cycle_matched_sharpes is provided (from backtest_utils.cycle_matched_sharpe),
+    If cycle_matched_sharpes is provided (from performance_evaluation.cycle_matched_sharpe),
     the aggregated payer vs buy-hold Sharpe is annotated above the Sharpe subplot.
     """
     labels        = []
@@ -413,7 +390,7 @@ def carry_decomposition_plot(
     ax.bar(x, fund_vals,  label="Funding carry (coupon − repo)", color="#D65F5F",
            bottom=price_vals)
     bottom_roll = [p + f for p, f in zip(price_vals, fund_vals)]
-    ax.bar(x, roll_vals,  label="Roll-down carry (−D·slope/250)", color="#C4AD66",
+    ax.bar(x, roll_vals,  label="Roll-down carry (−D·slope/252)", color="#C4AD66",
            bottom=bottom_roll)
 
     ax.axhline(0, color="black", lw=0.8)
@@ -469,7 +446,7 @@ def pnl_components_timeseries(
     styles = {
         "price_ret":  ("#4878CF", 2.0, "-",  "Price move (−D·Δy)"),
         "carry_fund": ("#D65F5F", 1.4, "--", "Funding carry (coupon − repo)"),
-        "carry_roll": ("#C4AD66", 1.4, "--", "Roll-down carry (−D·slope/250)"),
+        "carry_roll": ("#C4AD66", 1.4, "--", "Roll-down carry (−D·slope/252)"),
         "total_ret":  ("black",   2.0, "-",  "Total (price + both carry)"),
     }
 

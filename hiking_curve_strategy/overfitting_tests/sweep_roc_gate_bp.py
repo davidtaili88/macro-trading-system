@@ -3,13 +3,21 @@ OVERFITTING TEST — ROC_GATE_BP (the median-ROC gate on the ratio exit).
 
 The question this answers is NOT "what is the best ROC_GATE_BP?" — with only ~4-6
 cycles, optimizing a threshold against P&L is overfitting by construction. The
-honest question is: is the live value (-3bp) sitting on a FLAT PLATEAU (a wide band
+honest question is: is the live value (-6bp) sitting on a FLAT PLATEAU (a wide band
 of values that all behave identically -> the exact number is a don't-care, so there
-was nothing to overfit) or on a CLIFF (outcomes swing within a step or two of -3 ->
+was nothing to overfit) or on a CLIFF (outcomes swing within a step or two of -6 ->
 the result depends on threading a needle -> distrust the gate)?
 
-This is the same discipline the strategy already applies to REENTRY_BLOCK_BP
-(signal_logic.py: "any value in that ~200bp gap behaves identically on our data").
+RESULT: PLATEAU at -6bp — the gate is near-inert. Sweeping it 0..-12bp moves pooled P&L
+by only ~0.71pp total and never changes the cycle count (7 cycles throughout; -6 sits at
+~17.3%), so there is no material step to fall off anywhere near the live value. The
+automated screen raises FLAG_FOR_REVIEW, but on review it CLEARS to a plateau: on a curve
+this flat the relative outlier-test collapses, so a single ~0.5pp ripple grazes the
+material bar even though the whole sweep is economically nothing. So the exact ROC gate is
+a don't-care in a wide flat band; -6 is a round value inside it. See the ROC_GATE_BP
+comment in signal_logic.py.
+
+
 
 HOW IT WORKS
 ------------
@@ -24,7 +32,7 @@ For each swept value we report:
   - per-cycle and pooled compounded payer P&L on DGS2 price-only (the primary series)
 
 Then an automated verdict (overfit_test_utils.classify_plateau): score the LOCAL JUMPS
-in pooled P&L with a robust z (median + MAD) and ask whether the step in/out of -3bp is
+in pooled P&L with a robust z (median + MAD) and ask whether the step in/out of -6bp is
 an ordinary-sized wiggle (PLATEAU -> the number is a don't-care, nothing to overfit) or
 an outlier-sized lurch (CLIFF -> threading a needle on n<=6 cycles). Guards handle the
 all-flat (MAD≈0) and too-many-cliffs (robust-stat breakdown) degenerate cases.
@@ -99,11 +107,11 @@ def plot_sweep(sweep_bp, pooled_pct, live_value, verdict, false_flag=False):
 # swept values of ROC_GATE_BP, in bp (all <= 0: the gate is a "spread declining" floor).
 # 1bp steps around the live value, reaching just far enough to see where the plateau
 # ends on each side. We deliberately do NOT sweep to -30: past ~-18bp the gate enters a
-# different regime (cycles drop in and out), which tests a different question than "is -3
-# robust" and only pollutes the reference distribution. Wide enough to bracket the edge,
-# no wider.
+# different regime (cycles drop in and out), which tests a different question than "is the
+# live value robust" and only pollutes the reference distribution. Wide enough to bracket
+# the edge, no wider.
 SWEEP_BP = list(range(0, -13, -1))
-LIVE_VALUE = -3               # the value currently in signal_logic.py
+LIVE_VALUE = signal_logic.ROC_GATE_BP   # read from source so it can never drift out of sync
 DATA_START = "1982-10-01"     # detect_signal's own default; earliest date all signal inputs exist
 
 # --- plateau/cliff verdict knobs (see overfit_test_utils.py) ----------------------

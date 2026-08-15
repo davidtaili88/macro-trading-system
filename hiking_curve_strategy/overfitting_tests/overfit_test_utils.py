@@ -128,14 +128,6 @@ def classify_plateau(
          and carry-inclusive series (carry P&L is ~3x smaller, so a fixed pp bar would be
          far too permissive on it).
 
-    WHAT THIS STILL MISSES (disclosed): only cliffs BELOW the material bar — so every
-    possible miss is economically immaterial BY CONSTRUCTION (anything >= material_frac of
-    pooled is flagged unconditionally). Within that sub-material band, if the jump is also
-    small relative to the jump-noise, cliff and noise are genuinely indistinguishable
-    locally — but since it is sub-material anyway, that is an acceptable miss, not a
-    dangerous one. The mitigation for that regime is keeping the sweep SMOOTH (fine grid),
-    not a cleverer threshold.
-
     outcomes:      1-D sequence of outcome values (e.g. pooled P&L %), one per swept value,
                    in sweep order.
     live_idx:      index of the live parameter value within `outcomes`.

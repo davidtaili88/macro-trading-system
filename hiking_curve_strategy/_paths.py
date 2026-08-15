@@ -7,8 +7,8 @@ but every module is imported by its flat name (`from data import ...`,
 the folder split and is used by 15+ scripts, so rather than rewrite every import to
 a dotted path, this module registers the source folders on sys.path.
 
-Any runnable script (in scripts/, tests/, benchmark/, diagnostic_tests/,
-overfitting_tests/, parameter_generation/) should do, before its intra-package
+Any runnable script (in strategies/, benchmarks/, overfitting_tests/,
+parameter_generation/, resume_verification/) should do, before its intra-package
 imports:
 
     import _paths  # noqa: F401  — registers core/, benchmark/, utils/ on sys.path

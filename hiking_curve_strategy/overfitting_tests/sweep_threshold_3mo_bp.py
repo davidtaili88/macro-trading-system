@@ -12,6 +12,17 @@ PLATEAU (the exact number is a don't-care -> "round value in a wide band" is its
 justification) or on a CLIFF (pooled P&L lurches as you nudge the bar one step -> the
 value is load-bearing)?
 
+RESULT: FLAG_FOR_REVIEW at 12bp — NOT a flat plateau. The 3mo bar sits on a gentle
+downward SLOPE rather than a plateau: cycle count erodes one at a time as the bar rises
+(8 cycles below ~6bp where a near-term false-start survives; 7 at the live 12bp, pooled
+~17%; 6 by ~14bp; 5 by ~24bp), and above ~30bp it collapses as thin cycles are shut out
+(4 cycles at ~8%, then 2 at ~7%). Because the step just past 12bp drops a real cycle
+(material vs. the jump-noise), the exact bar IS load-bearing here — unlike the ratio exit,
+12bp cannot ride a plateau alibi. It is a disclosed discretionary choice sitting between
+the too-low edge (~<6bp, arms on near-term noise) and the too-high edge (~>14bp, starts
+dropping genuine cycles), pending more cycles. See the THRESHOLD_3MO_BP comment in
+signal_logic.py.
+
 WHY THE 3MO BAR IS TOUCHIER THAN THE 1YR BAR
 --------------------------------------------
 The 3mo spread is SHORT-dated, so it is dominated by the very next 1-2 FOMC meetings and

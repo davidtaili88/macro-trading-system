@@ -11,6 +11,15 @@ ROC-gate sweeps ask: is 50 sitting on a FLAT PLATEAU (the exact number is a don'
 -> "round value in a wide band" is itself the justification) or on a CLIFF (pooled P&L
 lurches as you nudge the bar one step -> the value is load-bearing)?
 
+RESULT: PLATEAU at 50bp — the step in/out of 50bp is an ordinary-sized wiggle (adjacent-
+jump robust-z ≈ 0), so the exact bar is a don't-care in a flat band ~40..55bp (7-8 cycles,
+pooled P&L ~17%). BELOW ~25bp the bar arms on ambiguous pricing and marginal early
+episodes creep in (up to 10-11 cycles); ABOVE ~55bp pooled steps down (~17% -> ~14% by
+60bp) and genuine thinner cycles start dropping out (7 -> 5 -> 4 cycles as the bar climbs
+to 90bp). So the exact 1yr bar rides a plateau; 50bp is a round value comfortably inside
+it — unlike the touchier 3mo bar, which sits on a slope. See the THRESHOLD_1YR_BP comment
+in signal_logic.py.
+
 WHAT MOVES AS THE BAR MOVES
 ---------------------------
 Unlike the ratio EXIT (which trims the tail of a held cycle), THRESHOLD_1YR_BP is an

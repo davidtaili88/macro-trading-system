@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import _paths  # noqa: F401 — registers core/, benchmark/, utils/ on sys.path
 from data      import fetch_zt, compute_returns, get_zt_roll_dates
 from backtest  import annualised_stats, rolling_sharpe, event_time_returns, calc_strat_ret, cycle_pnl
-from utils.backtest_utils import cycle_matched_sharpe
+from utils.performance_evaluation import cycle_matched_sharpe
 from plot      import equity_curve, event_time_plot, rolling_sharpe_plot, cycle_breakdown
 from benchmark import POST2003_FED_HIKE_CYCLES
 from signal_logic import detect_signal, signal_to_cycles

@@ -10,11 +10,11 @@ requires knowing future FOMC decisions):
 Runs on DGS2 (FRED constant-maturity 2yr), reconstructed into returns two ways:
     price-only:  r_t = -D * Δy_t                        (pure yield move, no carry)
     total:       r_t = price + carry_fund + carry_roll  (fetch_dgs2_full_pnl)
-DGS2 reaches back to 1976, covering every historical hiking cycle (ZT only
-starts ~2002). The total line uses the SAME price+funding+roll formula as
-strategies/signal_trade_dgs.py, so the oracle total-return line is directly
-comparable to the signal's total-return line — the only difference is oracle vs
-signal timing. See data.fetch_dgs2_full_pnl().
+DGS2 reaches back to 1976, covering every historical hiking cycle. The total
+line uses the SAME price+funding+roll formula as strategies/signal_trade_dgs.py,
+so the oracle total-return line is directly comparable to the signal's
+total-return line — the only difference is oracle vs signal timing. See
+data.fetch_dgs2_full_pnl().
 
 CYCLE CONSTANTS (single source of truth for the whole package)
 -------------------------------------------------------------
@@ -22,9 +22,10 @@ FED_HIKE_CYCLES           — every hiking cycle with data (first/last hike),
                             DERIVED at import from the DFEDTAR/DFEDTARL target
                             series via signal_logic.derive_fed_hike_cycles (no
                             hand-typed dates). Filtered to first hike >= 1990.
-POST2003_FED_HIKE_CYCLES  — the post-2002 subset (cycles where ZT price data
-                            also exists): the 3-cycle set strategies/*.py and
-                            resume_verification/*.py import for the oracle overlay.
+POST2003_FED_HIKE_CYCLES  — the modern subset (first hike >= 2003): the 3-cycle
+                            set strategies/*.py and resume_verification/*.py
+                            import for the oracle overlay, and the window over
+                            which tradable futures price data also exists.
                             Derived from FED_HIKE_CYCLES so there is ONE source —
                             change the derivation and both follow.
 """
@@ -73,9 +74,10 @@ _FRED_KEY_FOR_CYCLES = os.environ.get("FRED_API_KEY", "873c5477f9604271a243f7284
 _, _fed_target = _load_signal_data(_FRED_KEY_FOR_CYCLES, start="1982-10-01")
 FED_HIKE_CYCLES: list[dict] = derive_fed_hike_cycles(_fed_target, start_year=1990, min_hikes=2)
 
-# POST2003_FED_HIKE_CYCLES: the post-2002 subset (cycles where ZT price data
-# also exists) — the 3-cycle set strategies/*.py and resume_verification/*.py use
-# for the oracle overlay. Derived from FED_HIKE_CYCLES so there is ONE source.
+# POST2003_FED_HIKE_CYCLES: the modern subset (first hike >= 2003) — the 3-cycle
+# set strategies/*.py and resume_verification/*.py use for the oracle overlay, and
+# the window where tradable price data also exists. Derived from FED_HIKE_CYCLES
+# so there is ONE source.
 POST2003_FED_HIKE_CYCLES: list[dict] = [c for c in FED_HIKE_CYCLES
                                         if c["first_hike"].year >= 2003]
 
@@ -168,7 +170,7 @@ def main():
     print("\nOracle timing: entry -60td before first hike, exit -30td before last hike")
     print("(Perfect hindsight — NOT tradeable. Upper bound on strategy performance.)\n")
 
-    # full-history oracle, all cycles (incl. pre-2002 that ZT can't reach)
+    # full-history oracle, every hiking cycle DGS2 covers (back to 1990)
     df_price = _run("DGS2 price-only (D breathes, no carry)  — ALL cycles",
                     dgs2_ret, FED_HIKE_CYCLES)
     df_total = _run("DGS2 total (price + carry)              — ALL cycles",
