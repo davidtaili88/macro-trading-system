@@ -1,22 +1,20 @@
 """
-PARAMETER DERIVATION — the SLOPE WINDOW for a redesigned "Gate B" on the ratio exit.
+PARAMETER DERIVATION — the SLOPE WINDOW (SLOPE_WINDOW) for the momentum gate on the ratio exit.
 
-Companion to derive_roc_gate_bp.py. That file derives the gate THRESHOLD (how negative
-counts as "pricing out") from a flat-day noise floor. This file derives the gate WINDOW
-(how many trading days the slope is measured over) from the NOISE TIMESCALE of the spread.
+This derives the LIVE value signal_logic.SLOPE_WINDOW (= 42td). The gate's statistic is a
+standardized trailing OLS-SLOPE t-stat of spread_1yr over SLOPE_WINDOW days (see
+signal_logic._rolling_slope_tstat); this file fixes the WINDOW from the NOISE TIMESCALE of the
+spread, hindsight-free. The gate's THRESHOLD (SLOPE_T_THRESHOLD) is a separate, plateau-justified
+value — see overfitting_tests/sweep_slope_t_threshold.py, not here.
 
-WHY WE NEED THIS
-----------------
-The live Gate B is a 21-day rolling MEDIAN of the 21-day CHANGE in spread_1yr. A median of
-a two-endpoint difference is NOT a slope: it is blind to the path between the endpoints, so
-a single low print 21 days after a high print reads as a strong negative "trend" even when
-the spread just wobbled inside its normal band. That is exactly what fired the 2004-06 exit
-~10 months early (Sep 2005) on a one-print dip — see diagnostic_tests/diagnose_2005_early_exit.py.
-
-The fix we're pricing out here is to replace the gate statistic with a genuine trailing OLS
-SLOPE of spread_1yr — "is the spread STEADILY declining" = pricing hikes out. An OLS slope
-over W days needs W chosen well. Too short and a noise wiggle fakes a slope (21d ~ the noise
-floor itself, which is why the live gate fails); too long and it lags real rollovers.
+WHY THE WINDOW MATTERS
+----------------------
+The gate asks "is spread_1yr STEADILY declining" via a trailing OLS slope over W days. W must be
+chosen well: too SHORT and a single noise excursion fakes a slope (a window near the noise floor
+just measures wobble); too LONG and the slope lags a genuine rollover. The right scale for W is the
+NOISE TIMESCALE tau — how long a typical noise swing persists before it reverses. Make W a few x tau
+and, by construction, a noise excursion averages out inside the window while a sustained move survives.
+This file measures tau and reports the implied W.
 
 THE OVERFITTING TRAP (and how this file avoids it)
 --------------------------------------------------
@@ -33,27 +31,31 @@ in, would inflate tau). The mask is mechanical (distance-to-nearest-FOMC-move) a
 tau and to every exit date. Only AFTER W is fixed do we look at what it does to 2005 / 2019,
 as a downstream TEST — never as an input here.
 
-THREE ESTIMATORS OF tau
------------------------
-  1. AR(1) half-life          (PRIMARY — robust; a stray tick barely moves phi)
-  2. Variance-ratio horizon   (PRIMARY — robust; level-based, aggregated)
-  3. Smoothed sign-run length (CROSS-CHECK ONLY — raw sign-runs are fooled by a single
-     flip inside a real run, e.g. -----+-----, so we smooth lightly and treat it as
-     corroboration, not the primary number. It is EXPECTED to read short — sign-persistence
-     is not swing-persistence — and its disagreement with 1&2 is itself the lesson.)
+TWO ESTIMATORS OF tau
+---------------------
+  1. AR(1) half-life        (ANCHOR — a model-based, robust single timescale: half-life =
+     ln(0.5)/ln(phi), and one stray tick barely moves phi. This is the number W is built from.)
+  2. Variance-ratio curve   (MODEL-FREE CONFIRMATION — makes NO AR(1) assumption; just measures
+     how variance grows with horizon. Its job is to confirm the AR(1) scale isn't too SHORT, not
+     to emit its own tau: the curve has no flat "knee", so it yields a band, not a point.)
 
-The reused quiet-hold machinery (_find_flat_holds / interior trim / hiking-episode exclusion)
-is deliberately identical in spirit to derive_roc_gate_bp.py so both derivations rest on the
-same disjoint-from-signal null.
+The pairing is deliberate: one PARAMETRIC anchor plus one NON-PARAMETRIC check that the anchor
+isn't shorter than the data allows. That guards the one place AR(1) could be fragile (forcing a
+single-exponential model on the series) without adding a number that needs its own defense.
+
+The quiet-hold machinery (_find_flat_holds / interior trim / hiking-episode exclusion) is the
+same disjoint-from-signal null as the retired unused_mechanisms/derive_roc_gate_bp.py (which
+derived the OLD gate's bp threshold and is kept only for provenance) — both rest on a null that
+uses ONLY FOMC hike/cut dates + calendar offsets, never P&L, last-hike, or where the gate fires.
 
 WHAT WE REPORT
 --------------
   - the quiet sample (spans + day count) so the mask can be sanity-checked, plus a probe that
     the known exit-region dates are EXCLUDED
-  - tau from each estimator, and whether the two robust ones agree
-  - the implied slope window W ~ 2 x tau, with a longer robustness variant
+  - the AR(1) half-life -> tau, and whether the variance-ratio curve confirms tau isn't shorter
+  - the implied slope window W ~ 2 x tau, with a longer robustness variant (-> SLOPE_WINDOW=42)
 
-Run:  python3 unused_mechanisms/derive_slope_window.py    (run from the project root)
+Run:  cd hiking_curve_strategy && PYTHONPATH=. python3 parameter_generation/derive_slope_window.py
 """
 
 import os
@@ -64,7 +66,7 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hiking_curve_strategy"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # package root
 import _paths  # noqa: F401 — registers core/, benchmark/, utils/ on sys.path
 
 from signal_logic import (
@@ -73,7 +75,7 @@ from signal_logic import (
 )
 
 
-DATA_START    = "1976-01-01"
+DATA_START    = "1982-10-01"   # earliest date all signal inputs exist (DFEDTAR starts 1982-09-27)
 HOLD_MIN_DAYS = 126   # >= 6 months (trading days) of NO hike and NO cut = a "flat hold"
 TRIM_DAYS     = 30    # ~6 weeks trimmed off EACH end of a hold (policy-transition edge)
 
@@ -166,28 +168,12 @@ def vr_reversion_still_active(vr: pd.DataFrame) -> bool:
     return bool(vr["VR"].iloc[-1] < vr["VR"].iloc[-2])
 
 
-# ── estimator 3: smoothed sign-run length (cross-check) ─────────────────────
-def sign_run_lengths(x: pd.Series, smooth: int) -> np.ndarray:
-    """Run lengths of same-sign daily changes on a lightly SMOOTHED series, so a single
-    stray tick inside a real run (-----+-----) doesn't shatter it. Cross-check ONLY."""
-    s = x.rolling(smooth, min_periods=1).mean()
-    sgn = np.sign(s.diff().dropna().values)
-    sgn = sgn[sgn != 0]
-    if len(sgn) == 0:
-        return np.array([])
-    runs, cur = [], 1
-    for a, b in zip(sgn[:-1], sgn[1:]):
-        cur = cur + 1 if a == b else (runs.append(cur) or 1)
-    runs.append(cur)
-    return np.array(runs)
-
-
 def main():
     from dotenv import load_dotenv
     load_dotenv()
     api_key = os.environ.get("FRED_API_KEY", "873c5477f9604271a243f7284fe594c0")
 
-    print("Loading FRED spreads + FOMC target (from 1976)...")
+    print(f"Loading FRED spreads + FOMC target (from {DATA_START})...")
     daily_spreads, fed_target = _load_signal_data(api_key, start=DATA_START)
     spread_1yr = daily_spreads["spread_1yr_bp"]
 
@@ -234,7 +220,7 @@ def main():
     phi, hl = ar1_halflife(quiet)
     tau_ar_lo, tau_ar_hi = 2 * hl, 3 * hl
     print("\n" + "=" * 84)
-    print("[1] AR(1) HALF-LIFE  (primary, robust)")
+    print("[1] AR(1) HALF-LIFE  (anchor — model-based, robust)")
     print("=" * 84)
     print(f"  phi (1-day persistence) : {phi:.4f}")
     print(f"  half-life               : {hl:.1f} td")
@@ -244,7 +230,7 @@ def main():
     vr = variance_ratio_curve(quiet, VR_HORIZONS)
     still_reverting = vr_reversion_still_active(vr)
     print("\n" + "=" * 84)
-    print("[2] VARIANCE-RATIO CURVE  (primary, robust)")
+    print("[2] VARIANCE-RATIO CURVE  (model-free confirmation — no AR(1) assumption)")
     print("=" * 84)
     print("  VR ~ 1 => random-walk (noise still growing linearly);  < 1 => mean-reverting")
     for _, r in vr.iterrows():
@@ -253,25 +239,13 @@ def main():
     print(f"  VR still FALLING at the longest horizon (k={VR_HORIZONS[-1]})? {still_reverting}")
     print("  => the curve has NO flat knee: reversion is still removing variance out past ~40-60td,")
     print("     so the noise band is WIDE. VR does NOT contradict AR(1); it confirms tau is at")
-    print("     least the AR(1) scale (~15-23td), not the ~5td an arbitrary VR<0.5 crossing implies.")
-
-    # === estimator 3: smoothed sign-runs (cross-check) =========================
-    print("\n" + "=" * 84)
-    print("[3] SMOOTHED SIGN-RUN LENGTH  (cross-check ONLY — expected to read SHORT)")
-    print("=" * 84)
-    for sm in (3, 5):
-        runs = sign_run_lengths(quiet, smooth=sm)
-        if len(runs):
-            print(f"    smooth={sm}d:  median run={np.median(runs):.0f} td   "
-                  f"mean={runs.mean():.1f}   90th pct={np.percentile(runs, 90):.0f} td")
-    print("  Sign-PERSISTENCE is not swing-PERSISTENCE: a mean-reverting series flips sign")
-    print("  every few days while its LEVEL meanders inside one excursion. A short read here")
-    print("  that DISAGREES with [1]/[2] is expected and is the reason it's only a cross-check.")
+    print(f"     least the AR(1) scale (~{tau_ar_lo:.0f}-{tau_ar_hi:.0f}td), not the ~5td an arbitrary VR<0.5 crossing implies.")
 
     # === conclusion: the derived window ========================================
     # Anchor tau on the AR(1) half-life (robust, model-based). VR only CONFIRMS the band is
-    # not shorter than this — it must NOT be collapsed to a single crossing point, which
-    # under-states tau (that bug printed ~5td -> W~21td, the very window we know fails on 2005).
+    # not shorter than this — it must NOT be collapsed to a single crossing point (e.g. "first k
+    # with VR<0.5"), which badly UNDER-states tau: that naive read caught only the steep initial
+    # drop (~5td) and would have shrunk W to roughly one half-life — a wobble-scale window.
     tau_lo, tau_hi = tau_ar_lo, tau_ar_hi          # ~2-3 half-lives
     W_main = int(round(2 * (tau_lo + tau_hi) / 2 / 21.0) * 21)   # ~2 x tau, rounded to a month grid
     print("\n" + "=" * 84)
@@ -283,12 +257,11 @@ def main():
     print(f"  => proposed W (main)               : ~{W_main} td")
     print(f"  => robustness variant (longer)     : ~{int(round(1.5*W_main/21)*21)} td")
     print()
-    print("  This window is DERIVED FROM THE NOISE FLOOR, not from any exit date. The next")
-    print("  step (a TEST, not part of this derivation) is to build an OLS-slope Gate B over")
-    print("  this window and check it HOLDS the 2004-06 position through late 2005 while still")
-    print("  OPENING for the genuine 2018->2019 rollover. The slope THRESHOLD (how negative =")
-    print("  pricing out) is a separate, undish-derivable discretionary value — justify it with")
-    print("  a corridor sweep, the same treatment as RATIO_EXIT_THRESHOLD and ROC_GATE_BP.")
+    print("  This window is DERIVED FROM THE NOISE TIMESCALE, not from any exit date. It is the")
+    print("  LIVE signal_logic.SLOPE_WINDOW, feeding the standardized OLS-slope t-stat gate. The")
+    print("  slope THRESHOLD (how negative counts as pricing out) is a SEPARATE discretionary value,")
+    print("  justified by a plateau sweep (overfitting_tests/sweep_slope_t_threshold.py), the same")
+    print("  treatment as RATIO_EXIT_THRESHOLD — not derived here.")
 
 
 if __name__ == "__main__":

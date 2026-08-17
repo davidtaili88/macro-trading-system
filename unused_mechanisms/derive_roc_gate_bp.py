@@ -1,9 +1,14 @@
 """
-PARAMETER DERIVATION — ROC_GATE_BP (the median-ROC gate threshold on the ratio exit).
+RETIRED (kept for provenance) — this derived the *bp* threshold of the OLD momentum gate,
+a 21d median of the 21d two-point change in spread_1yr < ROC_GATE_BP. That gate was replaced
+in signal_logic.py by a standardized trailing-OLS-slope t-stat (SLOPE_WINDOW / SLOPE_T_THRESHOLD),
+whose WINDOW is derived by unused_mechanisms/derive_slope_window.py (AR(1) noise timescale) and
+whose t-THRESHOLD is a plateau value (overfitting_tests/sweep_slope_t_threshold.py). The two-point-
+diff estimator this file assumes (and the ROC_GATE_* constants it imports) no longer exist, so this
+script will NOT run against current signal_logic — it is preserved only to document the noise-floor
+methodology that motivated the replacement. See the SLOPE_WINDOW comment in signal_logic.py.
 
-This is NOT an overfitting test (that lives in overfitting_tests/, and asks "is the value
-fragile?"). This asks the prior question: WHERE SHOULD THE VALUE BE, from first principles,
-without touching P&L?
+PARAMETER DERIVATION — ROC_GATE_BP (the median-ROC gate threshold on the ratio exit).
 
 The gate opens (ratio exit allowed) when the gate statistic
 

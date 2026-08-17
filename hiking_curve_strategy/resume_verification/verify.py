@@ -6,8 +6,11 @@ a PASS/FAIL summary. Every figure is computed on DGS2. Each check verifies the
 claim as it is HONESTLY worded:
 
   - spans five hiking cycles since 1990 (min_hikes=2; the lone 1997 hike excluded)
-  - captured ~56% pre-carry of the perfect-hindsight benchmark (pooled, whole-strategy)
-  - multi-gate rule cutting late exits by up to ~2 months vs a naive trigger
+  - captured ~55% pre-carry of the perfect-hindsight benchmark (pooled, whole-strategy)
+  - momentum-gated exit rule cutting late exits by up to ~2 months vs a naive trigger
+    (the momentum gate is the maturity ratio + a standardized trailing-OLS-slope t-stat
+    on spread_1yr; see signal_logic.SLOPE_WINDOW / SLOPE_T_THRESHOLD. The claim is stated
+    conservatively at ~2 months — the measured reductions on the late cycles are larger.)
 
 The capture check is the POOLED whole-strategy pre-carry capture: pooled P&L of ALL
 detected episodes (including out-of-cycle false positives — real strategy behaviour,
@@ -121,7 +124,7 @@ def check_capture_ratio():
     revisions). Post-carry is intentionally NOT claimed (see resume scope)."""
     from benchmark import FED_HIKE_CYCLES, ENTRY_DAYS_BEFORE_FIRST, EXIT_DAYS_BEFORE_LAST
     from data import fetch_carryless_dgs2_returns
-    expect_pct, tol_pp = 56.0, 8.0
+    expect_pct, tol_pp = 55.0, 8.0
 
     signal_derived_cycles = strategy_cycles()
     # price-only return series: canonical carryless source (DGS2-only calendar).
@@ -178,7 +181,12 @@ def _final_exits(naive: bool) -> dict:
 
 
 def check_late_exit_reduction():
-    """On late-running cycles the full rule cuts lateness by up to ~2 months."""
+    """On late-running cycles the full momentum-gated rule (maturity ratio + standardized
+    OLS-slope t-stat) cuts lateness by up to ~2 months vs the naive spread-level trigger.
+    _final_exits(naive=True) disables the ratio branch (RATIO_EXIT_FLOOR_BP -> inf) and the
+    false-promise/neutral guards, leaving only the crude spread-level exit — so this measures
+    exactly what the momentum gate buys over the naive trigger. ~2 months is a conservative
+    floor; the measured reductions are larger (3-6mo on 2004-06/2015-18/2022-23)."""
     claimed_max = 62
     full, naive = _final_exits(naive=False), _final_exits(naive=True)
 

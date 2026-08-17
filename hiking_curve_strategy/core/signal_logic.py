@@ -62,10 +62,52 @@ Data sources (all FRED, no subscription required):
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # package root, for utils/
 from utils.fred_utils import fetch_fred_dataframe
+
+
+def _rolling_slope_tstat(y: pd.Series, window: int) -> pd.Series:
+    """t-statistic of the trailing OLS slope of `y`, per window of `window` days.
+
+    For each trailing window we fit y ~ a + b*x on the centered day-index x, then
+    standardize the slope by its own regression standard error:
+        t = b / SE(b),   SE(b) = s / sqrt(Sxx)
+    where s = sqrt( sum(resid^2) / (window-2) ) is the residual std (in-window noise)
+    and Sxx = sum(x_centered^2). t is a one-sided test of H0: b = 0 (flat): it is how
+    many standard errors the measured slope sits from flat. Unit-free and self-scaling.
+
+    Computed in closed form from rolling sums (no per-window python loop), so it is
+    exact and fast. Assumes iid residuals (the standard OLS SE); spread residuals are
+    mildly autocorrelated, so SE is slightly optimistic and t runs a touch hot — a
+    disclosed approximation, leaned against by the stricter -1.5 threshold. Returns NaN
+    until `window` observations exist. See SLOPE_WINDOW / SLOPE_T_THRESHOLD below.
+    """
+    n = window
+    x = np.arange(n, dtype=float)
+    x -= x.mean()
+    Sxx = float((x * x).sum())            # fixed window geometry (~n^3/12)
+    dof = n - 2
+
+    # rolling sums needed for slope + residual SS, all with a common window length n
+    roll = y.rolling(n, min_periods=n)
+    Sy   = roll.sum()
+    Syy  = y.pow(2).rolling(n, min_periods=n).sum()
+    # Sxy uses the SAME centered x on every window (x is fixed), so it's a weighted
+    # rolling sum: sum(x_i * y_i) over the window. Do it via a dot with the kernel.
+    Sxy = y.rolling(n, min_periods=n).apply(lambda v: float(np.dot(x, v)), raw=True)
+
+    b = Sxy / Sxx                          # slope (Sx = 0 because x is centered)
+    # residual sum of squares = Syy - Sy^2/n - b^2 * Sxx   (Sxy = b*Sxx)
+    rss = Syy - Sy.pow(2) / n - b.pow(2) * Sxx
+    s2 = rss / dof
+    se = (s2 / Sxx).pow(0.5)
+    t = b / se
+    # se == 0 (a perfectly straight window) -> slope is exact; treat as ±inf by sign of b
+    t = t.where(se != 0, other=np.sign(b) * np.inf)
+    return t
 
 
 # ── tuneable thresholds ────────────────────────────────────────────────────
@@ -171,21 +213,43 @@ NEUTRAL_VETO_BP = 15   # bp below nominal neutral: block the ratio exit while ga
                        # over-hold but also releases the 2005 veto early, forfeiting most of the
                        # 2004-06 recovery — the whole point of the guard. 15bp keeps the win.
 
-# ── ROC gate on the ratio exit ───────────────────────────────────────────────
+# ── momentum gate on the ratio exit (standardized trailing OLS slope) ─────────
 # The ratio exit above fires on the ratio's LEVEL alone — it can trip purely
 # because the denominator (cum bp hiked) is large, even while the spread is still
 # healthy. This gate adds a PRECONDITION: only allow the ratio exit when the spread
-# is genuinely rolling over — i.e. the 21-day MEDIAN of the month-over-month change
-# (spread now minus spread ~21d ago) is below ROC_GATE_BP. Intuition: don't even
-# consider exiting unless there's an independent signal the market wants to stop
-# hikes. The median-over-a-month makes it robust to transient shock swings (a
-# ~1-week move can't move a 21-day median). Coarse principled cutoff (spread
-# declining), NOT fitted. NOTE: this does NOT remove the 2022-23 re-entry episode
-# (in Dec-2022 the spread genuinely was declining — a pause that looked like an
-# end), but it is the right guard on the ratio and costs nothing on the good exits.
-ROC_GATE_MEDIAN_WINDOW = 21   # trading days: median window on the month-over-month ROC
-ROC_GATE_DIFF_LAG      = 21   # trading days: ROC horizon (spread vs ~1 month ago)
-ROC_GATE_BP            = -6   # bp: gate opens (ratio exit allowed) when median ROC below this
+# is genuinely rolling over — i.e. the 1yr spread is reliably TRENDING DOWN, not just
+# wobbling.
+#
+# HOW: fit a trailing ordinary-least-squares line to spread_1yr over SLOPE_WINDOW
+# days and standardize its slope by the slope's own regression standard error:
+#     t = slope / SE(slope) ,   SE(slope) = s / sqrt(Sxx)
+# where s = residual std of the fit (the in-window noise) and Sxx = sum of squared
+# centered day-indices. The gate opens when t < SLOPE_T_THRESHOLD. t is a one-sided
+# test of H0: "true slope = 0 (flat)" — it asks whether the measured down-tilt is too
+# steep to be flat-plus-noise. Because it is standardized it is UNIT-FREE and SELF-
+# SCALING: t < -1.5 means "the decline is beyond ~1.5 standard errors of the fit" in
+# ANY volatility regime, unlike a fixed bp cutoff that silently means different things
+# in a calm vs. a chaotic cycle.
+#
+# SLOPE_WINDOW is DERIVED, not picked: parameter_generation/derive_slope_window.py fits an
+# AR(1) to spread_1yr on quiet Fed-on-hold periods (disjoint from every trade — a hindsight-
+# free null using only FOMC hike/cut dates) and gets 1-day persistence phi~0.93, half-life
+# ~10td, so the noise timescale tau ~ 2-3 half-lives = ~21-31td; a variance-ratio curve
+# confirms mean-reversion is still active past 63td (band not shorter). The slope window must
+# span >= ~2*tau so a noise excursion averages out inside it -> W ~= 42td (63td robustness
+# variant). A window down at the half-life scale (~10td, i.e. << 2*tau) just measures wobble:
+# one lingering noise excursion fills it and reads as a trend.
+#
+# SLOPE_T_THRESHOLD is a DISCLOSED discretionary value inside a verified plateau (the
+# REENTRY_BLOCK_BP / RATIO_EXIT_THRESHOLD template), NOT a p-value: the residuals are
+# autocorrelated (so SE is optimistic and t runs slightly hot) and the gate is evaluated on
+# thousands of OVERLAPPING daily windows, so a per-test significance level would not mean
+# what it says. Instead -1.5 is a round "clearly beyond flat" scale, chosen on the STRICTER
+# side of one SE specifically to lean against that autocorrelation hotness. It is non-load-
+# bearing: at W=42, t<-1.0 / -1.5 / -2.0 give BYTE-IDENTICAL trades (7 cycles, 17.06%), so
+# the exact cutoff does not matter — the plateau, not the number, is the justification.
+SLOPE_WINDOW      = 42     # trading days: trailing OLS window (~2*tau; derive_slope_window.py)
+SLOPE_T_THRESHOLD = -1.5   # gate opens (ratio exit allowed) when standardized slope t < this
 
 # ── no re-entry into a MATURE cycle ─────────────────────────────────────────
 # Once we have exited, only re-arm the entry latch within the same in_cycle span if
@@ -457,11 +521,11 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
     # (matching spread_1yr_bp/spread_3mo_bp and the bp-denominated thresholds below).
     cum_hikes_bp = (target_change.clip(lower=0) * 10000).cumsum()
 
-    # ROC gate: 21-day median of the month-over-month spread change. The
-    # ratio exit is only allowed to fire when this is below ROC_GATE_BP (spread
-    # genuinely rolling over). Median over ~1 month makes it shock-robust.
-    roc_gate_series = spread_1yr.diff(ROC_GATE_DIFF_LAG) \
-                                .rolling(ROC_GATE_MEDIAN_WINDOW, min_periods=5).median()
+    # momentum gate: standardized trailing OLS slope (t-stat) of spread_1yr over
+    # SLOPE_WINDOW days. The ratio exit is only allowed to fire when this is below
+    # SLOPE_T_THRESHOLD (the spread is reliably trending down, not just wobbling).
+    # See the SLOPE_WINDOW / SLOPE_T_THRESHOLD comment block above for the derivation.
+    slope_t_series = _rolling_slope_tstat(spread_1yr, SLOPE_WINDOW)
 
     latched = False
     hiked_since_entry = False    # whether a real hike has landed since this entry
@@ -512,7 +576,7 @@ def detect_signal(fred_api_key: str, start: str = "1982-10-01",
             # additionally BLOCKS this exit while fed funds is still well below neutral
             # (a normalization cycle that isn't done climbing) — see _neutral_veto.
             elif cum_since_entry >= RATIO_EXIT_FLOOR_BP and \
-                    roc_gate_series[date] < ROC_GATE_BP and \
+                    slope_t_series[date] < SLOPE_T_THRESHOLD and \
                     spread_1yr_exit[date] / cum_since_entry < RATIO_EXIT_THRESHOLD and \
                     not _neutral_veto(nominal_neutral, daily_spreads_rates["dff"], date):
                 latched = False
